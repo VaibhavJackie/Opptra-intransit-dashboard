@@ -6,6 +6,7 @@ from datetime import date
 import io
 import datetime as _dt
 from pathlib import Path as _Path
+import json as _json
 
 st.set_page_config(
     page_title="In-Transit Dashboard | Opptra",
@@ -241,22 +242,55 @@ with st.spinner("Processing files…"):
 upload_label = date.today().strftime("%d %b %Y")
 today_ts = pd.Timestamp.today().normalize()
 
+# ── Sidebar: Global Filters ──────────────────────────────────────────────────
+_all_brands_list = sorted(df["brand"].dropna().astype(str).unique().tolist())
+_all_facs_list   = sorted(df["Facility"].dropna().astype(str).unique().tolist())
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("### 🔽 Filters")
+    st.caption("Leave empty = All")
+    sel_buckets = st.multiselect("Type",     BUCKET_ORDER,       placeholder="All types",      key="g_bucket")
+    sel_brands  = st.multiselect("Brand",    _all_brands_list,   placeholder="All brands",     key="g_brand")
+    sel_facs    = st.multiselect("Facility", _all_facs_list,     placeholder="All facilities", key="g_fac")
+
+fdf = df.copy()
+if sel_buckets: fdf = fdf[fdf["Main Bucket"].isin(sel_buckets)]
+if sel_brands:  fdf = fdf[fdf["brand"].isin(sel_brands)]
+if sel_facs:    fdf = fdf[fdf["Facility"].isin(sel_facs)]
+
+# ── Snapshot: save daily summary for movement graphs ─────────────────────────
+_SNAP_FILE = _DATA_DIR / "snapshot_history.csv"
+_today_str = str(date.today())
+if _SNAP_FILE.exists():
+    _snap_hist = pd.read_csv(_SNAP_FILE)
+    _snap_hist["date"] = _snap_hist["date"].astype(str)
+else:
+    _snap_hist = pd.DataFrame(columns=["date", "dimension", "name", "units", "value"])
+
+if _today_str not in _snap_hist["date"].values:
+    _ts = df.groupby("Main Bucket").agg(units=("Intransit_quantity","sum"), value=("Open Value (INR)","sum")).reset_index().rename(columns={"Main Bucket":"name"})
+    _ts["dimension"] = "type"; _ts["date"] = _today_str
+    _bs = df.groupby("brand").agg(units=("Intransit_quantity","sum"), value=("Open Value (INR)","sum")).reset_index().rename(columns={"brand":"name"})
+    _bs["dimension"] = "brand"; _bs["date"] = _today_str
+    _new_rows = pd.concat([_ts, _bs], ignore_index=True)[["date","dimension","name","units","value"]]
+    _snap_hist = pd.concat([_snap_hist, _new_rows], ignore_index=True)
+    try:
+        _snap_hist.to_csv(_SNAP_FILE, index=False)
+    except Exception:
+        pass
+
 # ════════════════════════════════════════════════════════════════════════════
 #  TAB LAYOUT
 # ════════════════════════════════════════════════════════════════════════════
-tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Ageing", "⚠️ Validation", "⬇️ Download"])
+tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Ageing", "📈 Movement", "⚠️ Validation", "⬇️ Download"])
 
 # ── TAB 1: OVERVIEW ─────────────────────────────────────────────────────────
 with tabs[0]:
     st.markdown(f"### Open In-Transit — {upload_label}")
 
-    all_brands = sorted(df["brand"].dropna().unique().tolist())
-    ov_brand = st.selectbox("Filter by brand", ["All"] + all_brands, key="ov_brand")
-    ov_df = df if ov_brand == "All" else df[df["brand"] == ov_brand]
-
-    total_vol  = ov_df["Intransit_quantity"].sum()
-    total_val  = ov_df["Open Value (INR)"].sum()
-    gt30       = ov_df[ov_df["Age"] > 30]
+    total_vol  = fdf["Intransit_quantity"].sum()
+    total_val  = fdf["Open Value (INR)"].sum()
+    gt30       = fdf[fdf["Age"] > 30]
     gt30_vol   = gt30["Intransit_quantity"].sum()
     gt30_val   = gt30["Open Value (INR)"].sum()
     gt30_pct   = (gt30_val / total_val * 100) if total_val else 0
@@ -271,7 +305,7 @@ with tabs[0]:
     st.markdown("---")
 
     bucket_df = (
-        ov_df.groupby("Main Bucket")
+        fdf.groupby("Main Bucket")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
         .sort_values("Value", ascending=False)
@@ -305,7 +339,7 @@ with tabs[0]:
     # Bucket × brand heatmap
     st.markdown("**Bucket × Brand heatmap (value)**")
     heat_df = (
-        ov_df.groupby(["Main Bucket", "brand"])["Open Value (INR)"].sum()
+        fdf.groupby(["Main Bucket", "brand"])["Open Value (INR)"].sum()
         .reset_index()
         .pivot(index="brand", columns="Main Bucket", values="Open Value (INR)")
         .fillna(0)
@@ -324,11 +358,8 @@ with tabs[0]:
 with tabs[1]:
     st.markdown("### Brand Summary")
 
-    b_bucket = st.selectbox("Filter by bucket", ["All"] + BUCKET_ORDER, key="brand_bucket")
-    b_src = df if b_bucket == "All" else df[df["Main Bucket"] == b_bucket]
-
     brand_total = (
-        b_src.groupby("brand")
+        fdf.groupby("brand")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
         .sort_values("Value", ascending=False)
@@ -354,7 +385,7 @@ with tabs[1]:
 
     st.markdown("**Brand × Bucket (₹ L)**")
     bxb = (
-        df.groupby(["brand", "Main Bucket"])["Open Value (INR)"].sum()
+        fdf.groupby(["brand", "Main Bucket"])["Open Value (INR)"].sum()
         .reset_index()
         .pivot(index="brand", columns="Main Bucket", values="Open Value (INR)")
         .fillna(0)
@@ -371,11 +402,8 @@ with tabs[1]:
 with tabs[2]:
     st.markdown("### Facility Summary")
 
-    f_bucket = st.selectbox("Filter by bucket", ["All"] + BUCKET_ORDER, key="fac_bucket")
-    f_src = df if f_bucket == "All" else df[df["Main Bucket"] == f_bucket]
-
     fac_total = (
-        f_src.groupby("Facility")
+        fdf.groupby("Facility")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
         .sort_values("Value", ascending=False)
@@ -401,7 +429,7 @@ with tabs[2]:
 
     st.markdown("**Facility × Bucket (₹ L)**")
     fxb = (
-        df.groupby(["Facility", "Main Bucket"])["Open Value (INR)"].sum()
+        fdf.groupby(["Facility", "Main Bucket"])["Open Value (INR)"].sum()
         .reset_index()
         .pivot(index="Facility", columns="Main Bucket", values="Open Value (INR)")
         .fillna(0)
@@ -418,183 +446,151 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("### Ageing Analysis")
 
-    age_bucket_filter = st.selectbox("Filter by bucket", ["All"] + BUCKET_ORDER, key="age_bucket")
-    suffix = f" · {age_bucket_filter}" if age_bucket_filter != "All" else ""
+    age_df = fdf[fdf["Age"].notna()].copy()
 
-    # Base filter — drop rows with no valid date (fixes "none" age bucket)
-    age_df = df[df["Age"].notna()].copy()
-    if age_bucket_filter != "All":
-        age_df = age_df[age_df["Main Bucket"] == age_bucket_filter]
+    def _piv_time(src, grp_col, val_col):
+        t = src[src[grp_col].notna() & (src[grp_col].astype(str) != "NaT")].copy()
+        pv = (t.groupby([grp_col, "brand"])[val_col].sum()
+              .reset_index().pivot(index="brand", columns=grp_col, values=val_col).fillna(0))
+        return pv
 
-    RISK_BUCKETS = ["31–60 Days", "60+ Days"]
+    def _piv_fac(src, grp_col, val_col):
+        t = src[src[grp_col].notna() & (src[grp_col].astype(str) != "NaT")].copy()
+        pv = (t.groupby([grp_col, "Facility"])[val_col].sum()
+              .reset_index().pivot(index="Facility", columns=grp_col, values=val_col).fillna(0))
+        return pv
 
-    def _make_piv(src, grp_col):
-        trend = src[src[grp_col].notna() & (src[grp_col].astype(str) != "NaT")].copy()
-        pv = (trend.groupby([grp_col, "Age Bucket"])["Open Value (INR)"].sum()
-              .reset_index().pivot(index=grp_col, columns="Age Bucket",
-                                   values="Open Value (INR)").fillna(0))
-        pq = (trend.groupby([grp_col, "Age Bucket"])["Intransit_quantity"].sum()
-              .reset_index().pivot(index=grp_col, columns="Age Bucket",
-                                   values="Intransit_quantity").fillna(0))
-        for b in AGE_BUCKETS:
-            if b not in pv.columns: pv[b] = 0
-            if b not in pq.columns: pq[b] = 0
-        pv = pv[AGE_BUCKETS]; pq = pq[AGE_BUCKETS]
-        if grp_col == "Month":
-            pv.index = pd.to_datetime(pv.index, format="%b %Y", errors="coerce")
-            pq.index = pd.to_datetime(pq.index, format="%b %Y", errors="coerce")
-        return pv.sort_index(), pq.sort_index()
+    def _sort_and_display(piv, col_type="month"):
+        try:
+            if col_type == "month":
+                cols = sorted(piv.columns, key=lambda x: pd.to_datetime(x, format="%b %Y"))
+            else:
+                cols = sorted(piv.columns)
+            piv = piv[cols[::-1]]
+        except Exception:
+            pass
+        piv["Total"] = piv.sum(axis=1)
+        piv = piv.sort_values("Total", ascending=False)
+        tot = piv.sum().rename("TOTAL")
+        return pd.concat([tot.to_frame().T, piv])
 
-    mom_val, mom_vol = _make_piv(age_df, "Month")
-    qoq_val, qoq_vol = _make_piv(age_df, "Quarter")
-    mom_labels = mom_val.index.strftime("%b %Y").tolist()
-    qoq_labels = [str(x) for x in qoq_val.index.tolist()]
-
-    # ── Section 1: Month-on-Month ────────────────────────────────────────────
+    # ── Brand × Month ──
     st.markdown("---")
-    st.markdown("#### 📅 Month-on-Month")
-    fig_mom = go.Figure()
-    for i, bk in enumerate(AGE_BUCKETS):
-        y = mom_val[bk].values / 100000
-        fig_mom.add_trace(go.Bar(
-            name=bk, x=mom_labels, y=y, marker_color=AGE_COLORS[i],
-            text=[fmt_L(v * 100000) if v > 0 else "" for v in y],
-            textposition="inside", insidetextanchor="middle",
-        ))
-    fig_mom.update_layout(
-        barmode="stack",
-        title=f"Ageing Profile — Month-on-Month{suffix}  (green = fresh, red = old)",
-        height=400, plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC",
-        yaxis_title="₹ Lakhs",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        font=dict(family="Inter, sans-serif"),
-    )
-    st.plotly_chart(fig_mom, use_container_width=True)
-    mv_d = mom_val.copy(); mv_d["Total"] = mv_d.sum(axis=1); mv_d = mv_d.iloc[::-1]
-    mq_d = mom_vol.copy(); mq_d["Total"] = mq_d.sum(axis=1); mq_d = mq_d.iloc[::-1]
-    mv_d.index = pd.to_datetime(mv_d.index).strftime("%b %Y")
-    mq_d.index = pd.to_datetime(mq_d.index).strftime("%b %Y")
-    ms1, ms2 = st.tabs(["Value (₹ L)", "Volume (Units)"])
-    with ms1: st.dataframe(mv_d.map(fmt_L), use_container_width=True)
-    with ms2: st.dataframe(mq_d.map(fmt_qty), use_container_width=True)
+    st.markdown("#### 🏷️ Brand × Month — MoM (₹ L)")
+    bm = _sort_and_display(_piv_time(age_df, "Month", "Open Value (INR)"), "month")
+    st.dataframe(bm.map(fmt_L), use_container_width=True)
 
-    # ── Section 2: Quarter-on-Quarter ────────────────────────────────────────
+    # ── Brand × Quarter ──
     st.markdown("---")
-    st.markdown("#### 📆 Quarter-on-Quarter")
-    fig_qoq = go.Figure()
-    for i, bk in enumerate(AGE_BUCKETS):
-        y = qoq_val[bk].values / 100000
-        fig_qoq.add_trace(go.Bar(
-            name=bk, x=qoq_labels, y=y, marker_color=AGE_COLORS[i],
-            text=[fmt_L(v * 100000) if v > 0 else "" for v in y],
-            textposition="inside", insidetextanchor="middle",
-        ))
-    fig_qoq.update_layout(
-        barmode="stack",
-        title=f"Ageing Profile — Quarter-on-Quarter{suffix}  (green = fresh, red = old)",
-        height=400, plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC",
-        yaxis_title="₹ Lakhs",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        font=dict(family="Inter, sans-serif"),
-    )
-    st.plotly_chart(fig_qoq, use_container_width=True)
-    qv_d = qoq_val.copy(); qv_d["Total"] = qv_d.sum(axis=1); qv_d = qv_d.iloc[::-1]
-    qq_d = qoq_vol.copy(); qq_d["Total"] = qq_d.sum(axis=1); qq_d = qq_d.iloc[::-1]
-    qs1, qs2 = st.tabs(["Value (₹ L)", "Volume (Units)"])
-    with qs1: st.dataframe(qv_d.map(fmt_L), use_container_width=True)
-    with qs2: st.dataframe(qq_d.map(fmt_qty), use_container_width=True)
+    st.markdown("#### 🏷️ Brand × Quarter — QoQ (₹ L)")
+    bq = _sort_and_display(_piv_time(age_df, "Quarter", "Open Value (INR)"), "quarter")
+    st.dataframe(bq.map(fmt_L), use_container_width=True)
 
-    # ── Section 3: Risk Movement (>30 Days) ──────────────────────────────────
+    # ── Facility × Month ──
     st.markdown("---")
-    st.markdown("#### ⚠️ Risk Movement — >30 Days Only")
-    st.caption("Excludes <30 day buckets — shows how at-risk inventory value has moved over time.")
+    st.markdown("#### 📍 Facility × Month — MoM (₹ L)")
+    fm = _sort_and_display(_piv_fac(age_df, "Month", "Open Value (INR)"), "month")
+    st.dataframe(fm.map(fmt_L), use_container_width=True)
 
-    risk_m_cols = [b for b in RISK_BUCKETS if b in mom_val.columns]
-    risk_q_cols = [b for b in RISK_BUCKETS if b in qoq_val.columns]
-    risk_mom_v  = mom_val[risk_m_cols].sum(axis=1) / 100000
-    risk_qoq_v  = qoq_val[risk_q_cols].sum(axis=1) / 100000
-
-    rc1, rc2 = st.columns(2)
-    with rc1:
-        fig_rm = go.Figure(go.Bar(
-            x=mom_labels, y=risk_mom_v.values, marker_color="#E63946",
-            text=[fmt_L(v * 100000) for v in risk_mom_v.values],
-            textposition="outside",
-        ))
-        fig_rm.update_layout(
-            title="MoM: >30d Risk (₹ L)", height=340,
-            plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC",
-            yaxis_title="₹ Lakhs", showlegend=False,
-            font=dict(family="Inter, sans-serif"),
-        )
-        st.plotly_chart(fig_rm, use_container_width=True)
-        rtbl_m = mom_val[risk_m_cols].copy()
-        rtbl_m["Total >30d"] = rtbl_m.sum(axis=1)
-        rtbl_m = rtbl_m.iloc[::-1]
-        rtbl_m.index = pd.to_datetime(rtbl_m.index).strftime("%b %Y")
-        st.dataframe(rtbl_m.map(fmt_L), use_container_width=True)
-
-    with rc2:
-        fig_rq = go.Figure(go.Bar(
-            x=qoq_labels, y=risk_qoq_v.values, marker_color="#FF5800",
-            text=[fmt_L(v * 100000) for v in risk_qoq_v.values],
-            textposition="outside",
-        ))
-        fig_rq.update_layout(
-            title="QoQ: >30d Risk (₹ L)", height=340,
-            plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC",
-            yaxis_title="₹ Lakhs", showlegend=False,
-            font=dict(family="Inter, sans-serif"),
-        )
-        st.plotly_chart(fig_rq, use_container_width=True)
-        rtbl_q = qoq_val[risk_q_cols].copy()
-        rtbl_q["Total >30d"] = rtbl_q.sum(axis=1)
-        rtbl_q = rtbl_q.iloc[::-1]
-        st.dataframe(rtbl_q.map(fmt_L), use_container_width=True)
-
-    # ── Section 4: Brand × Month ──────────────────────────────────────────────
+    # ── Facility × Quarter ──
     st.markdown("---")
-    st.markdown("#### 🏷️ Brand × Month (MoM)")
-    bm_src = age_df[age_df["Month"].notna() & (age_df["Month"].astype(str) != "NaT")].copy()
-    brand_mom_piv = (
-        bm_src.groupby(["brand", "Month"])["Open Value (INR)"].sum()
-        .reset_index().pivot(index="brand", columns="Month",
-                             values="Open Value (INR)").fillna(0)
-    )
-    try:
-        sorted_m = sorted(brand_mom_piv.columns,
-                          key=lambda x: pd.to_datetime(x, format="%b %Y"))
-        brand_mom_piv = brand_mom_piv[sorted_m[::-1]]
-    except Exception:
-        pass
-    brand_mom_piv["Total"] = brand_mom_piv.sum(axis=1)
-    brand_mom_piv = brand_mom_piv.sort_values("Total", ascending=False)
-    bm_tot = brand_mom_piv.sum().rename("TOTAL")
-    brand_mom_disp = pd.concat([bm_tot.to_frame().T, brand_mom_piv])
-    st.dataframe(brand_mom_disp.map(fmt_L), use_container_width=True)
+    st.markdown("#### 📍 Facility × Quarter — QoQ (₹ L)")
+    fq = _sort_and_display(_piv_fac(age_df, "Quarter", "Open Value (INR)"), "quarter")
+    st.dataframe(fq.map(fmt_L), use_container_width=True)
 
-    # ── Section 5: Brand × Quarter ────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("#### 📊 Brand × Quarter (QoQ)")
-    bq_src = age_df[age_df["Quarter"].notna() & (age_df["Quarter"].astype(str) != "NaT")].copy()
-    brand_qoq_piv = (
-        bq_src.groupby(["brand", "Quarter"])["Open Value (INR)"].sum()
-        .reset_index().pivot(index="brand", columns="Quarter",
-                             values="Open Value (INR)").fillna(0)
-    )
-    try:
-        sorted_q = sorted(brand_qoq_piv.columns)
-        brand_qoq_piv = brand_qoq_piv[sorted_q[::-1]]
-    except Exception:
-        pass
-    brand_qoq_piv["Total"] = brand_qoq_piv.sum(axis=1)
-    brand_qoq_piv = brand_qoq_piv.sort_values("Total", ascending=False)
-    bq_tot = brand_qoq_piv.sum().rename("TOTAL")
-    brand_qoq_disp = pd.concat([bq_tot.to_frame().T, brand_qoq_piv])
-    st.dataframe(brand_qoq_disp.map(fmt_L), use_container_width=True)
-
-# ── TAB 5: VALIDATION ───────────────────────────────────────────────────────
+# ── TAB 5: MOVEMENT ─────────────────────────────────────────────────────────
 with tabs[4]:
+    st.markdown("### Movement — Value Over Time")
+    st.caption("One snapshot per upload day. Run UPDATE_DATA.bat daily to build history.")
+
+    if len(_snap_hist) == 0:
+        st.info("No history yet — snapshots accumulate each time you upload new files on a new day.")
+    else:
+        sh = _snap_hist.copy()
+        sh["date"]  = pd.to_datetime(sh["date"])
+        sh["value"] = pd.to_numeric(sh["value"], errors="coerce").fillna(0)
+        sh["units"] = pd.to_numeric(sh["units"], errors="coerce").fillna(0)
+
+        gran = st.radio("Granularity", ["Day-on-Day", "Week-on-Week", "Month-on-Month"],
+                        horizontal=True, key="mv_gran")
+
+        if gran == "Day-on-Day":
+            sh["period"]   = sh["date"].dt.strftime("%d %b")
+            sh["sort_key"] = sh["date"]
+        elif gran == "Week-on-Week":
+            sh["period"]   = "W" + sh["date"].dt.isocalendar().week.astype(str) + " " + sh["date"].dt.year.astype(str)
+            sh["sort_key"] = sh["date"] - pd.to_timedelta(sh["date"].dt.dayofweek, unit="D")
+        else:
+            sh["period"]   = sh["date"].dt.strftime("%b %Y")
+            sh["sort_key"] = sh["date"].dt.to_period("M").dt.to_timestamp()
+
+        sh_agg = sh.groupby(["dimension","name","period","sort_key"]).agg(
+            value=("value","sum"), units=("units","sum")).reset_index()
+        periods_sorted = (sh_agg[["period","sort_key"]].drop_duplicates()
+                          .sort_values("sort_key")["period"].tolist())
+
+        # ── Type Level ──
+        st.markdown("---")
+        st.markdown("#### 📦 Type Level")
+        th = sh_agg[sh_agg["dimension"] == "type"]
+        if len(th):
+            fig_t = go.Figure()
+            for bk in BUCKET_ORDER:
+                td = th[th["name"] == bk].sort_values("sort_key")
+                if td.empty: continue
+                fig_t.add_trace(go.Scatter(
+                    x=td["period"], y=td["value"]/100000,
+                    mode="lines+markers", name=bk,
+                    marker_color=BUCKET_COLORS.get(bk,"#888"), line=dict(width=2),
+                ))
+            fig_t.update_layout(
+                title=f"Open Value by Type — {gran}", height=380,
+                plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC", yaxis_title="₹ Lakhs",
+                xaxis=dict(categoryorder="array", categoryarray=periods_sorted),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_t, use_container_width=True)
+            tp = th.pivot_table(index="name", columns="period", values="value", aggfunc="sum").fillna(0)
+            tp = tp[[c for c in periods_sorted if c in tp.columns]]
+            tp["Total"] = tp.sum(axis=1)
+            tp = tp.reindex([b for b in BUCKET_ORDER if b in tp.index])
+            tp_tot = tp.sum().rename("TOTAL")
+            st.dataframe(pd.concat([tp_tot.to_frame().T, tp]).map(fmt_L), use_container_width=True)
+
+        # ── Brand Level ──
+        st.markdown("---")
+        st.markdown("#### 🏷️ Brand Level")
+        bh = sh_agg[sh_agg["dimension"] == "brand"]
+        if len(bh):
+            top15 = bh.groupby("name")["value"].sum().nlargest(15).index.tolist()
+            sel_mv = st.multiselect("Select brands (leave empty = top 10)",
+                                    sorted(bh["name"].unique()), default=top15[:10], key="mv_brands")
+            if not sel_mv: sel_mv = top15[:10]
+            bh_f = bh[bh["name"].isin(sel_mv)]
+            fig_b = go.Figure()
+            for br in sel_mv:
+                bd = bh_f[bh_f["name"] == br].sort_values("sort_key")
+                if bd.empty: continue
+                fig_b.add_trace(go.Scatter(
+                    x=bd["period"], y=bd["value"]/100000,
+                    mode="lines+markers", name=br, line=dict(width=2),
+                ))
+            fig_b.update_layout(
+                title=f"Open Value by Brand — {gran}", height=420,
+                plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC", yaxis_title="₹ Lakhs",
+                xaxis=dict(categoryorder="array", categoryarray=periods_sorted),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_b, use_container_width=True)
+            bp = bh_f.pivot_table(index="name", columns="period", values="value", aggfunc="sum").fillna(0)
+            bp = bp[[c for c in periods_sorted if c in bp.columns]]
+            bp["Total"] = bp.sum(axis=1)
+            bp = bp.sort_values("Total", ascending=False)
+            bp_tot = bp.sum().rename("TOTAL")
+            st.dataframe(pd.concat([bp_tot.to_frame().T, bp]).map(fmt_L), use_container_width=True)
+
+# ── TAB 6: VALIDATION ───────────────────────────────────────────────────────
+with tabs[5]:
     st.markdown("### Validation Report")
 
     checks = {
@@ -629,8 +625,8 @@ with tabs[4]:
     bc = df.groupby("Main Bucket").size().reset_index(name="Rows")
     st.dataframe(bc, hide_index=True, use_container_width=True)
 
-# ── TAB 6: DOWNLOAD ─────────────────────────────────────────────────────────
-with tabs[5]:
+# ── TAB 7: DOWNLOAD ─────────────────────────────────────────────────────────
+with tabs[6]:
     st.markdown("### Download Output")
     st.markdown(f"""
 Each download creates two dated tabs that won't overwrite your previous uploads:

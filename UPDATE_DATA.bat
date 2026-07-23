@@ -40,7 +40,7 @@ copy /y "%LATEST_GRN%" "data\latest_grn.csv" >nul
 echo Copied to data/ folder.
 
 REM ── Step 4: Commit and push ──
-git add data\latest_it.csv data\latest_grn.csv app.py .gitignore START_DASHBOARD.bat
+git add data\latest_it.csv data\latest_grn.csv data\snapshot_history.csv app.py .gitignore START_DASHBOARD.bat UPDATE_DATA.bat 2>nul
 git commit -m "Data update %DATE% %TIME:~0,5%"
 git push
 
