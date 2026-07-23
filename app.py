@@ -214,6 +214,25 @@ with st.sidebar:
     grn_file = st.file_uploader("GRN / Inventory Ledger (.csv)", type=["csv"])
     st.markdown("---")
     st.caption("Upload both files to refresh the dashboard for **all viewers**.")
+    with st.expander("📋 Required column format"):
+        st.markdown("**In-Transit file** — required columns:")
+        st.code(
+            "date\n"
+            "Intransit_quantity\n"
+            "warehouse\n"
+            "GP_PO\n"
+            "brand\n"
+            "Facility\n"
+            "sku",
+            language=None,
+        )
+        st.markdown("**GRN / Inventory Ledger** — required columns:")
+        st.code(
+            "sku\n"
+            "cost_pu",
+            language=None,
+        )
+        st.caption("Column names are case-sensitive. Extra columns are ignored.")
 
 if it_file and grn_file:
     it_bytes  = it_file.read()
