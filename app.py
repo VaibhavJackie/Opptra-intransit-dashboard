@@ -138,15 +138,8 @@ def add_total_row(df, group_col, vol_col="Volume", val_col="Value"):
     return pd.concat([pd.DataFrame([total]), df], ignore_index=True)
 
 def styled_metric(label, value, sub=""):
-    st.markdown(
-        f"""<div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;
-        padding:14px 18px;margin:4px 0">
-        <div style="font-size:12px;color:#64748B;font-weight:500">{label}</div>
-        <div style="font-size:22px;font-weight:700;color:#0F172A">{value}</div>
-        {"<div style='font-size:11px;color:#94A3B8'>"+sub+"</div>" if sub else ""}
-        </div>""",
-        unsafe_allow_html=True,
-    )
+    st.metric(label=label, value=value, delta=sub if sub else None,
+              delta_color="off" if sub else "normal")
 
 # ─── Excel builder ───────────────────────────────────────────────────────────
 def build_excel(df: pd.DataFrame, avg_cost: pd.DataFrame, upload_date: str) -> bytes:
@@ -190,22 +183,22 @@ st.markdown("""
 <style>
 [data-testid="stAppViewContainer"]{background:#F0F4F8}
 [data-testid="stHeader"]{background:transparent}
-.block-container{padding-top:1.5rem}
-div[data-testid="metric-container"]{background:#fff;border:1px solid #E2E8F0;border-radius:10px;padding:12px}
+.block-container{padding-top:1rem}
+[data-testid="metric-container"]{background:#fff;border:1px solid #E2E8F0;border-radius:10px;padding:12px 16px}
+.filter-bar{background:#fff;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;margin-bottom:12px}
 </style>
 """, unsafe_allow_html=True)
 
 # Header
-st.markdown("""
-<div style="background:linear-gradient(90deg,#131A48,#1e2a6e);color:white;border-radius:12px;
-padding:18px 24px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
-<span style="font-size:28px">📦</span>
-<div>
-  <div style="font-size:20px;font-weight:700">In-Transit Visibility Dashboard</div>
-  <div style="font-size:13px;opacity:0.7">Opptra Supply Chain · Upload files to refresh</div>
-</div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    '<div style="background:linear-gradient(90deg,#131A48,#1e2a6e);color:white;border-radius:12px;'
+    'padding:16px 24px;margin-bottom:16px;display:flex;align-items:center;gap:14px">'
+    '<span style="font-size:30px">📦</span>'
+    '<div><div style="font-size:20px;font-weight:700;letter-spacing:.3px">In-Transit Visibility Dashboard</div>'
+    '<div style="font-size:12px;opacity:.7;margin-top:2px">Opptra Supply Chain</div></div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
 _DATA_DIR   = _Path(__file__).parent / "data"
 _DATA_DIR.mkdir(exist_ok=True)
@@ -242,21 +235,31 @@ with st.spinner("Processing files…"):
 upload_label = date.today().strftime("%d %b %Y")
 today_ts = pd.Timestamp.today().normalize()
 
-# ── Sidebar: Global Filters ──────────────────────────────────────────────────
+# ── Global Filter Bar (above tabs) ───────────────────────────────────────────
 _all_brands_list = sorted(df["brand"].dropna().astype(str).unique().tolist())
 _all_facs_list   = sorted(df["Facility"].dropna().astype(str).unique().tolist())
-with st.sidebar:
-    st.markdown("---")
-    st.markdown("### 🔽 Filters")
-    st.caption("Leave empty = All")
-    sel_buckets = st.multiselect("Type",     BUCKET_ORDER,       placeholder="All types",      key="g_bucket")
-    sel_brands  = st.multiselect("Brand",    _all_brands_list,   placeholder="All brands",     key="g_brand")
-    sel_facs    = st.multiselect("Facility", _all_facs_list,     placeholder="All facilities", key="g_fac")
+
+_all_gps_list = sorted(df["GP_PO"].dropna().astype(str).unique().tolist())
+with st.container():
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        sel_buckets = st.multiselect("🏷️ Type", BUCKET_ORDER,
+                                     placeholder="All types", key="g_bucket")
+    with fc2:
+        sel_brands  = st.multiselect("🏢 Brand", _all_brands_list,
+                                     placeholder="All brands", key="g_brand")
+    with fc3:
+        sel_facs    = st.multiselect("📍 Facility", _all_facs_list,
+                                     placeholder="All facilities", key="g_fac")
+    with fc4:
+        sel_gp      = st.selectbox("📋 Gatepass / Doc", ["All"] + _all_gps_list,
+                                   key="g_gp")
 
 fdf = df.copy()
-if sel_buckets: fdf = fdf[fdf["Main Bucket"].isin(sel_buckets)]
-if sel_brands:  fdf = fdf[fdf["brand"].isin(sel_brands)]
-if sel_facs:    fdf = fdf[fdf["Facility"].isin(sel_facs)]
+if sel_buckets:          fdf = fdf[fdf["Main Bucket"].isin(sel_buckets)]
+if sel_brands:           fdf = fdf[fdf["brand"].isin(sel_brands)]
+if sel_facs:             fdf = fdf[fdf["Facility"].isin(sel_facs)]
+if sel_gp != "All":      fdf = fdf[fdf["GP_PO"].astype(str) == sel_gp]
 
 # ── Snapshot: save daily summary for movement graphs ─────────────────────────
 _SNAP_FILE = _DATA_DIR / "snapshot_history.csv"
@@ -288,81 +291,118 @@ tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Agein
 with tabs[0]:
     st.markdown(f"### Open In-Transit — {upload_label}")
 
-    total_vol  = fdf["Intransit_quantity"].sum()
-    total_val  = fdf["Open Value (INR)"].sum()
-    gt30       = fdf[fdf["Age"] > 30]
-    gt30_vol   = gt30["Intransit_quantity"].sum()
-    gt30_val   = gt30["Open Value (INR)"].sum()
-    gt30_pct   = (gt30_val / total_val * 100) if total_val else 0
+    # ── KPI Row ──────────────────────────────────────────────────────────────
+    total_vol = fdf["Intransit_quantity"].sum()
+    total_val = fdf["Open Value (INR)"].sum()
+    gt30      = fdf[fdf["Age"] > 30]
+    gt30_vol  = gt30["Intransit_quantity"].sum()
+    gt30_val  = gt30["Open Value (INR)"].sum()
+    gt30_pct  = (gt30_val / total_val * 100) if total_val else 0
+    missing_cost_units = fdf[fdf["Open Value (INR)"].isna() | (fdf["Open Value (INR)"] == 0)]["Intransit_quantity"].sum()
 
     k = st.columns(5)
-    with k[0]: styled_metric("Total Open Units", fmt_qty(total_vol))
-    with k[1]: styled_metric("Total Open Value", fmt_L(total_val))
-    with k[2]: styled_metric(">30 Days Units",   fmt_qty(gt30_vol))
-    with k[3]: styled_metric(">30 Days Value",   fmt_L(gt30_val))
-    with k[4]: styled_metric(">30 Days % of Value", f"{gt30_pct:.1f}%")
+    k[0].metric("📦 Total Units",        fmt_qty(total_vol))
+    k[1].metric("💰 Total Value",        fmt_L(total_val))
+    k[2].metric("⚠️ >30 Days Units",     fmt_qty(gt30_vol))
+    k[3].metric("⚠️ >30 Days Value",     fmt_L(gt30_val),
+                delta=f"{gt30_pct:.1f}% of total", delta_color="inverse")
+    k[4].metric("❓ Units Missing Cost",  fmt_qty(missing_cost_units))
 
-    st.markdown("---")
+    st.divider()
 
+    # ── By Type (table + chart side by side) ─────────────────────────────────
+    st.markdown("#### By Type")
     bucket_df = (
         fdf.groupby("Main Bucket")
-        .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
-        .reset_index()
-        .sort_values("Value", ascending=False)
+        .agg(Volume=("Intransit_quantity","sum"), Value=("Open Value (INR)","sum"))
+        .reset_index().sort_values("Value", ascending=False)
     )
+    gt30_bucket = (
+        fdf[fdf["Age"] > 30].groupby("Main Bucket")
+        .agg(Over30_Vol=("Intransit_quantity","sum"), Over30_Val=("Open Value (INR)","sum"))
+        .reset_index()
+    )
+    bucket_df = bucket_df.merge(gt30_bucket, on="Main Bucket", how="left").fillna(0)
 
-    left, right = st.columns([1, 2])
-    with left:
-        st.markdown("**By Bucket**")
-        disp = add_total_row(bucket_df, "Main Bucket").copy()
+    tbl_left, chart_right = st.columns([1, 2])
+    with tbl_left:
+        disp = bucket_df.copy()
+        disp[">30d %"] = disp.apply(
+            lambda r: f"{r['Over30_Val']/r['Value']*100:.0f}%" if r["Value"] else "—", axis=1)
         disp["Volume"] = disp["Volume"].apply(fmt_qty)
         disp["Value"]  = disp["Value"].apply(fmt_L)
-        st.dataframe(disp, hide_index=True, use_container_width=True, height=280)
+        disp[">30d Val"] = disp["Over30_Val"].apply(fmt_L)
+        tot_row = pd.DataFrame([{
+            "Main Bucket": "TOTAL",
+            "Volume": fmt_qty(bucket_df["Volume"].sum()),
+            "Value":  fmt_L(bucket_df["Value"].sum()),
+            ">30d Val": fmt_L(bucket_df["Over30_Val"].sum()),
+            ">30d %": f"{gt30_pct:.0f}%",
+        }])
+        st.dataframe(
+            pd.concat([tot_row, disp[["Main Bucket","Volume","Value",">30d Val",">30d %"]]],
+                      ignore_index=True),
+            hide_index=True, use_container_width=True, height=290,
+        )
 
-    with right:
+    with chart_right:
+        bucket_plot = bucket_df.copy()
         fig = go.Figure()
-        for _, row in bucket_df.iterrows():
+        for _, row in bucket_plot.iterrows():
+            bk = row["Main Bucket"]
             fig.add_trace(go.Bar(
-                x=[row["Main Bucket"]], y=[row["Value"] / 100000],
-                name=row["Main Bucket"],
-                marker_color=BUCKET_COLORS.get(row["Main Bucket"], "#6B7280"),
+                x=[bk], y=[row["Value"]/100000], name=bk,
+                marker_color=BUCKET_COLORS.get(bk,"#6B7280"),
                 text=[fmt_L(row["Value"])], textposition="outside",
             ))
         fig.update_layout(
-            title="Open Value by Bucket (₹ L)", showlegend=False,
-            height=320, plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC",
+            showlegend=False, height=300,
+            plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC",
             yaxis_title="₹ Lakhs", xaxis_title="",
-            font=dict(family="Inter, sans-serif"),
+            margin=dict(t=20, b=10),
+            font=dict(family="sans-serif"),
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # Bucket × brand heatmap
-    st.markdown("**Bucket × Brand heatmap (value)**")
-    heat_df = (
-        fdf.groupby(["Main Bucket", "brand"])["Open Value (INR)"].sum()
-        .reset_index()
-        .pivot(index="brand", columns="Main Bucket", values="Open Value (INR)")
-        .fillna(0)
+    st.divider()
+
+    # ── Brand × Type treemap ─────────────────────────────────────────────────
+    st.markdown("#### Brand × Type — Value Breakdown")
+    tree_df = (
+        fdf.groupby(["Main Bucket","brand"])["Open Value (INR)"].sum()
+        .reset_index().rename(columns={"Open Value (INR)":"Value"})
     )
-    top_brands = heat_df.sum(axis=1).nlargest(20).index
-    heat_df = heat_df.loc[top_brands]
-    fig_heat = px.imshow(
-        heat_df,
-        color_continuous_scale="Blues", aspect="auto",
-        labels=dict(color="INR"), title="Top 20 Brands × Bucket (Open Value)"
+    tree_df = tree_df[tree_df["Value"] > 0]
+    fig_tree = px.treemap(
+        tree_df, path=["Main Bucket","brand"], values="Value",
+        color="Main Bucket",
+        color_discrete_map=BUCKET_COLORS,
+        custom_data=["Value"],
     )
-    fig_heat.update_layout(height=450, paper_bgcolor="#F8FAFC")
-    st.plotly_chart(fig_heat, use_container_width=True)
+    fig_tree.update_traces(
+        texttemplate="%{label}<br>%{customdata[0]:,.0f}",
+        hovertemplate="%{label}<br>₹%{customdata[0]:,.0f}<extra></extra>",
+    )
+    fig_tree.update_traces(texttemplate="%{label}")
+    fig_tree.update_layout(height=420, margin=dict(t=10, b=5, l=5, r=5),
+                           paper_bgcolor="#F8FAFC")
+    st.plotly_chart(fig_tree, use_container_width=True)
 
 # ── TAB 2: BRAND ────────────────────────────────────────────────────────────
 with tabs[1]:
     st.markdown("### Brand Summary")
 
+    brand_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
+                            horizontal=True, key="brand_metric")
+    b_vcol = "Open Value (INR)" if brand_metric == "Value (₹ L)" else "Intransit_quantity"
+    b_fmt  = fmt_L if brand_metric == "Value (₹ L)" else fmt_qty
+    b_axis = "₹ Lakhs" if brand_metric == "Value (₹ L)" else "Units"
+
     brand_total = (
         fdf.groupby("brand")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
-        .sort_values("Value", ascending=False)
+        .sort_values(b_vcol if b_vcol == "Intransit_quantity" else "Value", ascending=False)
     )
 
     left, right = st.columns([1, 2])
@@ -373,21 +413,23 @@ with tabs[1]:
         st.dataframe(disp, hide_index=True, use_container_width=True, height=380)
 
     with right:
+        top15 = brand_total.head(15).copy()
+        x_vals = top15["Intransit_quantity"] if brand_metric == "Volume (Units)" else top15["Value"] / 100000
         fig_b = px.bar(
-            brand_total.head(15), y="brand", x=brand_total.head(15)["Value"] / 100000,
-            orientation="h", title="Top 15 Brands (₹ L)",
-            color="Value", color_continuous_scale="Blues",
+            top15, y="brand", x=x_vals,
+            orientation="h", title=f"Top 15 Brands ({brand_metric})",
+            color=x_vals, color_continuous_scale="Blues",
         )
         fig_b.update_layout(height=420, paper_bgcolor="#F8FAFC",
-                            xaxis_title="₹ Lakhs",
+                            xaxis_title=b_axis,
                             yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_b, use_container_width=True)
 
-    st.markdown("**Brand × Bucket (₹ L)**")
+    st.markdown(f"**Brand × Bucket ({brand_metric})**")
     bxb = (
-        fdf.groupby(["brand", "Main Bucket"])["Open Value (INR)"].sum()
+        fdf.groupby(["brand", "Main Bucket"])[b_vcol].sum()
         .reset_index()
-        .pivot(index="brand", columns="Main Bucket", values="Open Value (INR)")
+        .pivot(index="brand", columns="Main Bucket", values=b_vcol)
         .fillna(0)
     )
     for b in BUCKET_ORDER:
@@ -396,17 +438,23 @@ with tabs[1]:
     bxb = bxb[BUCKET_ORDER]
     bxb["Total"] = bxb.sum(axis=1)
     bxb = bxb.sort_values("Total", ascending=False)
-    st.dataframe(bxb.map(fmt_L), use_container_width=True)
+    st.dataframe(bxb.map(b_fmt), use_container_width=True)
 
 # ── TAB 3: FACILITY ─────────────────────────────────────────────────────────
 with tabs[2]:
     st.markdown("### Facility Summary")
 
+    fac_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
+                          horizontal=True, key="fac_metric")
+    f_vcol = "Open Value (INR)" if fac_metric == "Value (₹ L)" else "Intransit_quantity"
+    f_fmt  = fmt_L if fac_metric == "Value (₹ L)" else fmt_qty
+    f_axis = "₹ Lakhs" if fac_metric == "Value (₹ L)" else "Units"
+
     fac_total = (
         fdf.groupby("Facility")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
-        .sort_values("Value", ascending=False)
+        .sort_values("Volume" if fac_metric == "Volume (Units)" else "Value", ascending=False)
     )
 
     left, right = st.columns([1, 2])
@@ -417,21 +465,23 @@ with tabs[2]:
         st.dataframe(disp, hide_index=True, use_container_width=True, height=380)
 
     with right:
+        top15f = fac_total.head(15).copy()
+        xf_vals = top15f["Intransit_quantity"] if fac_metric == "Volume (Units)" else top15f["Value"] / 100000
         fig_f = px.bar(
-            fac_total.head(15), y="Facility", x=fac_total.head(15)["Value"] / 100000,
-            orientation="h", title="Top 15 Facilities (₹ L)",
-            color="Value", color_continuous_scale="Purples",
+            top15f, y="Facility", x=xf_vals,
+            orientation="h", title=f"Top 15 Facilities ({fac_metric})",
+            color=xf_vals, color_continuous_scale="Purples",
         )
         fig_f.update_layout(height=420, paper_bgcolor="#F8FAFC",
-                            xaxis_title="₹ Lakhs",
+                            xaxis_title=f_axis,
                             yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_f, use_container_width=True)
 
-    st.markdown("**Facility × Bucket (₹ L)**")
+    st.markdown(f"**Facility × Bucket ({fac_metric})**")
     fxb = (
-        fdf.groupby(["Facility", "Main Bucket"])["Open Value (INR)"].sum()
+        fdf.groupby(["Facility", "Main Bucket"])[f_vcol].sum()
         .reset_index()
-        .pivot(index="Facility", columns="Main Bucket", values="Open Value (INR)")
+        .pivot(index="Facility", columns="Main Bucket", values=f_vcol)
         .fillna(0)
     )
     for b in BUCKET_ORDER:
@@ -440,7 +490,7 @@ with tabs[2]:
     fxb = fxb[BUCKET_ORDER]
     fxb["Total"] = fxb.sum(axis=1)
     fxb = fxb.sort_values("Total", ascending=False)
-    st.dataframe(fxb.map(fmt_L), use_container_width=True)
+    st.dataframe(fxb.map(f_fmt), use_container_width=True)
 
 # ── TAB 4: AGEING ───────────────────────────────────────────────────────────
 with tabs[3]:
@@ -448,55 +498,65 @@ with tabs[3]:
 
     age_df = fdf[fdf["Age"].notna()].copy()
 
-    def _piv_time(src, grp_col, val_col):
-        t = src[src[grp_col].notna() & (src[grp_col].astype(str) != "NaT")].copy()
-        pv = (t.groupby([grp_col, "brand"])[val_col].sum()
-              .reset_index().pivot(index="brand", columns=grp_col, values=val_col).fillna(0))
-        return pv
+    # Vol / Value toggle (used by all pivot tables in this tab)
+    age_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
+                          horizontal=True, key="age_metric")
+    val_col = "Open Value (INR)" if age_metric == "Value (₹ L)" else "Intransit_quantity"
+    fmt_fn  = fmt_L if age_metric == "Value (₹ L)" else fmt_qty
 
-    def _piv_fac(src, grp_col, val_col):
+    def _piv_dim(src, grp_col, dim_col, vcol):
         t = src[src[grp_col].notna() & (src[grp_col].astype(str) != "NaT")].copy()
-        pv = (t.groupby([grp_col, "Facility"])[val_col].sum()
-              .reset_index().pivot(index="Facility", columns=grp_col, values=val_col).fillna(0))
-        return pv
+        return (t.groupby([grp_col, dim_col])[vcol].sum()
+                .reset_index().pivot(index=dim_col, columns=grp_col, values=vcol).fillna(0))
 
-    def _sort_and_display(piv, col_type="month"):
+    def _sort_piv(piv, col_type="month"):
         try:
-            if col_type == "month":
-                cols = sorted(piv.columns, key=lambda x: pd.to_datetime(x, format="%b %Y"))
-            else:
-                cols = sorted(piv.columns)
+            cols = (sorted(piv.columns, key=lambda x: pd.to_datetime(x, format="%b %Y"))
+                    if col_type == "month" else sorted(piv.columns))
             piv = piv[cols[::-1]]
         except Exception:
             pass
+        piv = piv.copy()
         piv["Total"] = piv.sum(axis=1)
         piv = piv.sort_values("Total", ascending=False)
         tot = piv.sum().rename("TOTAL")
         return pd.concat([tot.to_frame().T, piv])
 
+    # ── Type × Month ──
+    st.markdown("---")
+    st.markdown(f"#### 🏷️ Type × Month — MoM ({age_metric})")
+    tm = _sort_piv(_piv_dim(age_df, "Month", "Main Bucket", val_col), "month")
+    st.dataframe(tm.map(fmt_fn), use_container_width=True)
+
+    # ── Type × Quarter ──
+    st.markdown("---")
+    st.markdown(f"#### 🏷️ Type × Quarter — QoQ ({age_metric})")
+    tq = _sort_piv(_piv_dim(age_df, "Quarter", "Main Bucket", val_col), "quarter")
+    st.dataframe(tq.map(fmt_fn), use_container_width=True)
+
     # ── Brand × Month ──
     st.markdown("---")
-    st.markdown("#### 🏷️ Brand × Month — MoM (₹ L)")
-    bm = _sort_and_display(_piv_time(age_df, "Month", "Open Value (INR)"), "month")
-    st.dataframe(bm.map(fmt_L), use_container_width=True)
+    st.markdown(f"#### 🏢 Brand × Month — MoM ({age_metric})")
+    bm = _sort_piv(_piv_dim(age_df, "Month", "brand", val_col), "month")
+    st.dataframe(bm.map(fmt_fn), use_container_width=True)
 
     # ── Brand × Quarter ──
     st.markdown("---")
-    st.markdown("#### 🏷️ Brand × Quarter — QoQ (₹ L)")
-    bq = _sort_and_display(_piv_time(age_df, "Quarter", "Open Value (INR)"), "quarter")
-    st.dataframe(bq.map(fmt_L), use_container_width=True)
+    st.markdown(f"#### 🏢 Brand × Quarter — QoQ ({age_metric})")
+    bq = _sort_piv(_piv_dim(age_df, "Quarter", "brand", val_col), "quarter")
+    st.dataframe(bq.map(fmt_fn), use_container_width=True)
 
     # ── Facility × Month ──
     st.markdown("---")
-    st.markdown("#### 📍 Facility × Month — MoM (₹ L)")
-    fm = _sort_and_display(_piv_fac(age_df, "Month", "Open Value (INR)"), "month")
-    st.dataframe(fm.map(fmt_L), use_container_width=True)
+    st.markdown(f"#### 📍 Facility × Month — MoM ({age_metric})")
+    fm = _sort_piv(_piv_dim(age_df, "Month", "Facility", val_col), "month")
+    st.dataframe(fm.map(fmt_fn), use_container_width=True)
 
     # ── Facility × Quarter ──
     st.markdown("---")
-    st.markdown("#### 📍 Facility × Quarter — QoQ (₹ L)")
-    fq = _sort_and_display(_piv_fac(age_df, "Quarter", "Open Value (INR)"), "quarter")
-    st.dataframe(fq.map(fmt_L), use_container_width=True)
+    st.markdown(f"#### 📍 Facility × Quarter — QoQ ({age_metric})")
+    fq = _sort_piv(_piv_dim(age_df, "Quarter", "Facility", val_col), "quarter")
+    st.dataframe(fq.map(fmt_fn), use_container_width=True)
 
 # ── TAB 5: MOVEMENT ─────────────────────────────────────────────────────────
 with tabs[4]:
