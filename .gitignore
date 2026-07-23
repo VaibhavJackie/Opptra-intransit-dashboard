@@ -3,5 +3,6 @@ __pycache__/
 *.pyo
 .env
 *.xlsx
-*.csv
 .DS_Store
+# Allow data CSVs (needed for Streamlit Cloud deployment)
+!data/*.csv
