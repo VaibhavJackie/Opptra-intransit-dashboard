@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import date
 import io
 import datetime as _dt
 from pathlib import Path as _Path
@@ -236,7 +235,7 @@ else:
 with st.spinner("Processing files…"):
     df, missing_skus, avg_cost = process(it_bytes, grn_bytes)
 
-upload_label = date.today().strftime("%d %b %Y")
+upload_label = _dt.date.today().strftime("%d %b %Y")
 today_ts = pd.Timestamp.today().normalize()
 
 # ── Global Filter Bar (above tabs) ───────────────────────────────────────────
@@ -265,31 +264,11 @@ if sel_brands:           fdf = fdf[fdf["brand"].isin(sel_brands)]
 if sel_facs:             fdf = fdf[fdf["Facility"].isin(sel_facs)]
 if sel_gp != "All":      fdf = fdf[fdf["GP_PO"].astype(str) == sel_gp]
 
-# ── Snapshot: save daily summary for movement graphs ─────────────────────────
-_SNAP_FILE = _DATA_DIR / "snapshot_history.csv"
-_today_str = str(date.today())
-if _SNAP_FILE.exists():
-    _snap_hist = pd.read_csv(_SNAP_FILE)
-    _snap_hist["date"] = _snap_hist["date"].astype(str)
-else:
-    _snap_hist = pd.DataFrame(columns=["date", "dimension", "name", "units", "value"])
-
-if _today_str not in _snap_hist["date"].values:
-    _ts = df.groupby("Main Bucket").agg(units=("Intransit_quantity","sum"), value=("Open Value (INR)","sum")).reset_index().rename(columns={"Main Bucket":"name"})
-    _ts["dimension"] = "type"; _ts["date"] = _today_str
-    _bs = df.groupby("brand").agg(units=("Intransit_quantity","sum"), value=("Open Value (INR)","sum")).reset_index().rename(columns={"brand":"name"})
-    _bs["dimension"] = "brand"; _bs["date"] = _today_str
-    _new_rows = pd.concat([_ts, _bs], ignore_index=True)[["date","dimension","name","units","value"]]
-    _snap_hist = pd.concat([_snap_hist, _new_rows], ignore_index=True)
-    try:
-        _snap_hist.to_csv(_SNAP_FILE, index=False)
-    except Exception:
-        pass
 
 # ════════════════════════════════════════════════════════════════════════════
 #  TAB LAYOUT
 # ════════════════════════════════════════════════════════════════════════════
-tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Ageing", "📈 Movement", "⚠️ Validation", "⬇️ Download"])
+tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Ageing", "⚠️ Validation", "⬇️ Download"])
 
 # ── TAB 1: OVERVIEW ─────────────────────────────────────────────────────────
 with tabs[0]:
@@ -558,99 +537,8 @@ with tabs[3]:
     fq = _sort_piv(_piv_dim(age_df, "Quarter", "Facility", val_col), "quarter")
     st.dataframe(fq.map(fmt_fn), use_container_width=True)
 
-# ── TAB 5: MOVEMENT ─────────────────────────────────────────────────────────
+# ── TAB 5: VALIDATION ───────────────────────────────────────────────────────
 with tabs[4]:
-    st.markdown("### Movement — Value Over Time")
-    st.caption("One snapshot per upload day. Run UPDATE_DATA.bat daily to build history.")
-
-    if len(_snap_hist) == 0:
-        st.info("No history yet — snapshots accumulate each time you upload new files on a new day.")
-    else:
-        sh = _snap_hist.copy()
-        sh["date"]  = pd.to_datetime(sh["date"])
-        sh["value"] = pd.to_numeric(sh["value"], errors="coerce").fillna(0)
-        sh["units"] = pd.to_numeric(sh["units"], errors="coerce").fillna(0)
-
-        gran = st.radio("Granularity", ["Day-on-Day", "Week-on-Week", "Month-on-Month"],
-                        horizontal=True, key="mv_gran")
-
-        if gran == "Day-on-Day":
-            sh["period"]   = sh["date"].dt.strftime("%d %b")
-            sh["sort_key"] = sh["date"]
-        elif gran == "Week-on-Week":
-            sh["period"]   = "W" + sh["date"].dt.isocalendar().week.astype(str) + " " + sh["date"].dt.year.astype(str)
-            sh["sort_key"] = sh["date"] - pd.to_timedelta(sh["date"].dt.dayofweek, unit="D")
-        else:
-            sh["period"]   = sh["date"].dt.strftime("%b %Y")
-            sh["sort_key"] = sh["date"].dt.to_period("M").dt.to_timestamp()
-
-        sh_agg = sh.groupby(["dimension","name","period","sort_key"]).agg(
-            value=("value","sum"), units=("units","sum")).reset_index()
-        periods_sorted = (sh_agg[["period","sort_key"]].drop_duplicates()
-                          .sort_values("sort_key")["period"].tolist())
-
-        # ── Type Level ──
-        st.markdown("---")
-        st.markdown("#### 📦 Type Level")
-        th = sh_agg[sh_agg["dimension"] == "type"]
-        if len(th):
-            fig_t = go.Figure()
-            for bk in BUCKET_ORDER:
-                td = th[th["name"] == bk].sort_values("sort_key")
-                if td.empty: continue
-                fig_t.add_trace(go.Scatter(
-                    x=td["period"], y=td["value"]/100000,
-                    mode="lines+markers", name=bk,
-                    marker_color=BUCKET_COLORS.get(bk,"#888"), line=dict(width=2),
-                ))
-            fig_t.update_layout(
-                title=f"Open Value by Type — {gran}", height=380,
-                plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC", yaxis_title="₹ Lakhs",
-                xaxis=dict(categoryorder="array", categoryarray=periods_sorted),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            )
-            st.plotly_chart(fig_t, use_container_width=True)
-            tp = th.pivot_table(index="name", columns="period", values="value", aggfunc="sum").fillna(0)
-            tp = tp[[c for c in periods_sorted if c in tp.columns]]
-            tp["Total"] = tp.sum(axis=1)
-            tp = tp.reindex([b for b in BUCKET_ORDER if b in tp.index])
-            tp_tot = tp.sum().rename("TOTAL")
-            st.dataframe(pd.concat([tp_tot.to_frame().T, tp]).map(fmt_L), use_container_width=True)
-
-        # ── Brand Level ──
-        st.markdown("---")
-        st.markdown("#### 🏷️ Brand Level")
-        bh = sh_agg[sh_agg["dimension"] == "brand"]
-        if len(bh):
-            top15 = bh.groupby("name")["value"].sum().nlargest(15).index.tolist()
-            sel_mv = st.multiselect("Select brands (leave empty = top 10)",
-                                    sorted(bh["name"].unique()), default=top15[:10], key="mv_brands")
-            if not sel_mv: sel_mv = top15[:10]
-            bh_f = bh[bh["name"].isin(sel_mv)]
-            fig_b = go.Figure()
-            for br in sel_mv:
-                bd = bh_f[bh_f["name"] == br].sort_values("sort_key")
-                if bd.empty: continue
-                fig_b.add_trace(go.Scatter(
-                    x=bd["period"], y=bd["value"]/100000,
-                    mode="lines+markers", name=br, line=dict(width=2),
-                ))
-            fig_b.update_layout(
-                title=f"Open Value by Brand — {gran}", height=420,
-                plot_bgcolor="#F8FAFC", paper_bgcolor="#F8FAFC", yaxis_title="₹ Lakhs",
-                xaxis=dict(categoryorder="array", categoryarray=periods_sorted),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            )
-            st.plotly_chart(fig_b, use_container_width=True)
-            bp = bh_f.pivot_table(index="name", columns="period", values="value", aggfunc="sum").fillna(0)
-            bp = bp[[c for c in periods_sorted if c in bp.columns]]
-            bp["Total"] = bp.sum(axis=1)
-            bp = bp.sort_values("Total", ascending=False)
-            bp_tot = bp.sum().rename("TOTAL")
-            st.dataframe(pd.concat([bp_tot.to_frame().T, bp]).map(fmt_L), use_container_width=True)
-
-# ── TAB 6: VALIDATION ───────────────────────────────────────────────────────
-with tabs[5]:
     st.markdown("### Validation Report")
 
     checks = {
@@ -685,8 +573,8 @@ with tabs[5]:
     bc = df.groupby("Main Bucket").size().reset_index(name="Rows")
     st.dataframe(bc, hide_index=True, use_container_width=True)
 
-# ── TAB 7: DOWNLOAD ─────────────────────────────────────────────────────────
-with tabs[6]:
+# ── TAB 6: DOWNLOAD ─────────────────────────────────────────────────────────
+with tabs[5]:
     st.markdown("### Download Output")
     st.markdown(f"""
 Each download creates two dated tabs that won't overwrite your previous uploads:
@@ -701,7 +589,7 @@ Each download creates two dated tabs that won't overwrite your previous uploads:
     st.download_button(
         label=f"⬇️  Download Excel  ({upload_label})",
         data=excel_bytes,
-        file_name=f"intransit_{date.today().strftime('%Y-%m-%d')}.xlsx",
+        file_name=f"intransit_{_dt.date.today().strftime('%Y-%m-%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
