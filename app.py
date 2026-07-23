@@ -78,7 +78,11 @@ def process(it_bytes: bytes, grn_bytes: bytes):
     df["Intransit_quantity"] = pd.to_numeric(df["Intransit_quantity"], errors="coerce").fillna(0)
     df = df[df["Intransit_quantity"] > 0].copy()
 
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+    _raw_date  = df["date"].copy()
+    df["date"] = pd.to_datetime(_raw_date, dayfirst=True, errors="coerce")
+    _nat       = df["date"].isna()
+    if _nat.any():
+        df.loc[_nat, "date"] = pd.to_datetime(_raw_date[_nat], dayfirst=False, errors="coerce")
     df["quantity"]          = pd.to_numeric(df.get("quantity", 0), errors="coerce").fillna(0)
     df["received_quantity"] = pd.to_numeric(df.get("received_quantity", 0), errors="coerce").fillna(0)
 
@@ -392,17 +396,11 @@ with tabs[0]:
 with tabs[1]:
     st.markdown("### Brand Summary")
 
-    brand_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
-                            horizontal=True, key="brand_metric")
-    b_vcol = "Open Value (INR)" if brand_metric == "Value (₹ L)" else "Intransit_quantity"
-    b_fmt  = fmt_L if brand_metric == "Value (₹ L)" else fmt_qty
-    b_axis = "₹ Lakhs" if brand_metric == "Value (₹ L)" else "Units"
-
     brand_total = (
         fdf.groupby("brand")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
-        .sort_values(b_vcol if b_vcol == "Intransit_quantity" else "Value", ascending=False)
+        .sort_values("Value", ascending=False)
     )
 
     left, right = st.columns([1, 2])
@@ -414,16 +412,20 @@ with tabs[1]:
 
     with right:
         top15 = brand_total.head(15).copy()
-        x_vals = top15["Intransit_quantity"] if brand_metric == "Volume (Units)" else top15["Value"] / 100000
         fig_b = px.bar(
-            top15, y="brand", x=x_vals,
-            orientation="h", title=f"Top 15 Brands ({brand_metric})",
-            color=x_vals, color_continuous_scale="Blues",
+            top15, y="brand", x=top15["Value"] / 100000,
+            orientation="h", title="Top 15 Brands (₹ L)",
+            color="Value", color_continuous_scale="Blues",
         )
         fig_b.update_layout(height=420, paper_bgcolor="#F8FAFC",
-                            xaxis_title=b_axis,
+                            xaxis_title="₹ Lakhs",
                             yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_b, use_container_width=True)
+
+    brand_metric = st.radio("Brand × Bucket — Show", ["Value (₹ L)", "Volume (Units)"],
+                            horizontal=True, key="brand_metric")
+    b_vcol = "Open Value (INR)" if brand_metric == "Value (₹ L)" else "Intransit_quantity"
+    b_fmt  = fmt_L if brand_metric == "Value (₹ L)" else fmt_qty
 
     st.markdown(f"**Brand × Bucket ({brand_metric})**")
     bxb = (
@@ -444,17 +446,11 @@ with tabs[1]:
 with tabs[2]:
     st.markdown("### Facility Summary")
 
-    fac_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
-                          horizontal=True, key="fac_metric")
-    f_vcol = "Open Value (INR)" if fac_metric == "Value (₹ L)" else "Intransit_quantity"
-    f_fmt  = fmt_L if fac_metric == "Value (₹ L)" else fmt_qty
-    f_axis = "₹ Lakhs" if fac_metric == "Value (₹ L)" else "Units"
-
     fac_total = (
         fdf.groupby("Facility")
         .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"))
         .reset_index()
-        .sort_values("Volume" if fac_metric == "Volume (Units)" else "Value", ascending=False)
+        .sort_values("Value", ascending=False)
     )
 
     left, right = st.columns([1, 2])
@@ -466,16 +462,20 @@ with tabs[2]:
 
     with right:
         top15f = fac_total.head(15).copy()
-        xf_vals = top15f["Intransit_quantity"] if fac_metric == "Volume (Units)" else top15f["Value"] / 100000
         fig_f = px.bar(
-            top15f, y="Facility", x=xf_vals,
-            orientation="h", title=f"Top 15 Facilities ({fac_metric})",
-            color=xf_vals, color_continuous_scale="Purples",
+            top15f, y="Facility", x=top15f["Value"] / 100000,
+            orientation="h", title="Top 15 Facilities (₹ L)",
+            color="Value", color_continuous_scale="Purples",
         )
         fig_f.update_layout(height=420, paper_bgcolor="#F8FAFC",
-                            xaxis_title=f_axis,
+                            xaxis_title="₹ Lakhs",
                             yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_f, use_container_width=True)
+
+    fac_metric = st.radio("Facility × Bucket — Show", ["Value (₹ L)", "Volume (Units)"],
+                          horizontal=True, key="fac_metric")
+    f_vcol = "Open Value (INR)" if fac_metric == "Value (₹ L)" else "Intransit_quantity"
+    f_fmt  = fmt_L if fac_metric == "Value (₹ L)" else fmt_qty
 
     st.markdown(f"**Facility × Bucket ({fac_metric})**")
     fxb = (
