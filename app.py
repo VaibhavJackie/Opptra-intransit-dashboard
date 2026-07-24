@@ -167,15 +167,16 @@ def build_excel(df: pd.DataFrame, avg_cost: pd.DataFrame, upload_date: str) -> b
         .sort_values("Value", ascending=False)
     )
 
-    # Raw Data – all columns
-    raw_cols = [
+    # Raw Data – preferred order first, then any extra columns from the uploaded file
+    _preferred = [
         "date", "GP_PO", "sku", "Facility", "To Facility", "warehouse",
         "quantity", "received_quantity", "Intransit_quantity", "brand", "Reference",
         "Main Bucket", "Average Cost", "Open Value (INR)", "Delta Cost", "Age", "Age Bucket",
         "Month", "Quarter", "Year", "Document Type", "Movement Type", "Warehouse Bucket",
         "Current Month Flag", "Previous Month Flag", "Quarter Flag",
     ]
-    raw_cols = [c for c in raw_cols if c in df.columns]
+    raw_cols = [c for c in _preferred if c in df.columns]
+    raw_cols += [c for c in df.columns if c not in raw_cols]
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         it_summary.to_excel(writer, sheet_name=f"In-Transit - {upload_date}", index=False)
