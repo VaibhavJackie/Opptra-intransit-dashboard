@@ -73,6 +73,15 @@ def process(it_bytes: bytes, grn_bytes: bytes):
     # --- In-Transit ---
     df = pd.read_csv(io.BytesIO(it_bytes))
     df.columns = df.columns.str.strip()
+    # Normalize key column names — case-insensitive so CSV exports with different
+    # capitalisation (Brand vs brand, Facility vs facility, etc.) all work.
+    _EXPECTED = {
+        "brand": "brand", "intransit_quantity": "Intransit_quantity",
+        "facility": "Facility", "gp_po": "GP_PO", "warehouse": "warehouse",
+        "sku": "sku", "date": "date", "quantity": "quantity",
+        "received_quantity": "received_quantity",
+    }
+    df = df.rename(columns={c: _EXPECTED[c.lower()] for c in df.columns if c.lower() in _EXPECTED})
 
     df["Intransit_quantity"] = pd.to_numeric(df["Intransit_quantity"], errors="coerce").fillna(0)
     df = df[df["Intransit_quantity"] > 0].copy()
@@ -109,6 +118,7 @@ def process(it_bytes: bytes, grn_bytes: bytes):
     # --- GRN ---
     grn = pd.read_csv(io.BytesIO(grn_bytes))
     grn.columns = grn.columns.str.strip()
+    grn = grn.rename(columns={c: c.lower() for c in grn.columns})
     grn["cost_pu"] = pd.to_numeric(grn["cost_pu"], errors="coerce")
     avg_cost = (
         grn.groupby("sku")["cost_pu"]
