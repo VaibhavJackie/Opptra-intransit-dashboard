@@ -77,13 +77,30 @@ def process(it_bytes: bytes, grn_bytes: bytes):
     # capitalisation (Brand vs brand, Facility vs facility, etc.) all work.
     _EXPECTED = {
         "brand": "brand", "intransit_quantity": "Intransit_quantity",
-        "facility": "Facility", "gp_po": "GP_PO", "warehouse": "warehouse",
+        "facility": "Facility", "from_facility": "Facility",   # from_facility → Facility
+        "to_facility": "To Facility",                           # keep to_facility separately
+        "gp_po": "GP_PO", "warehouse": "warehouse",
         "sku": "sku", "date": "date", "quantity": "quantity",
         "received_quantity": "received_quantity",
+        "reference": "Reference",                               # reference ID column
     }
     df = df.rename(columns={c: _EXPECTED[c.lower()] for c in df.columns if c.lower() in _EXPECTED})
 
+    # Ensure Facility column exists even if neither from_facility nor facility was present
+    if "Facility" not in df.columns:
+        df["Facility"] = ""
+
     df["Intransit_quantity"] = pd.to_numeric(df["Intransit_quantity"], errors="coerce").fillna(0)
+
+    # Deduplicate on GP_PO + SKU — sum quantities, keep first for metadata columns
+    _meta_cols = [c for c in df.columns if c not in
+                  ("Intransit_quantity", "quantity", "received_quantity")]
+    df = (df.groupby(["GP_PO", "sku"], as_index=False)
+            .agg({**{c: "first" for c in _meta_cols if c not in ("GP_PO","sku")},
+                  "Intransit_quantity": "sum",
+                  "quantity":           "sum" if "quantity" in df.columns else "first",
+                  "received_quantity":  "sum" if "received_quantity" in df.columns else "first"}))
+
     df = df[df["Intransit_quantity"] > 0].copy()
 
     _raw_date  = df["date"].copy()
