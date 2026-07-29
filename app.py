@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # ─── Constants ───────────────────────────────────────────────────────────────
-BUCKET_ORDER = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C", "BigBasket"]
+BUCKET_ORDER = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C", "Others"]
 AGE_BUCKETS  = ["0–7 Days", "8–15 Days", "16–30 Days", "31–60 Days", "60+ Days"]
 BUCKET_COLORS = {
     "IWIT":        "#3B82F6",
@@ -23,24 +23,19 @@ BUCKET_COLORS = {
     "FBA Reverse": "#F59E0B",
     "1P":          "#8B5CF6",
     "B2C":         "#EF4444",
-    "BigBasket":   "#EC4899",
+    "Others":      "#6B7280",
 }
 AGE_COLORS = ["#22c55e", "#84cc16", "#f97316", "#ef4444", "#7c3aed"]
 
 # ─── Bucket logic ────────────────────────────────────────────────────────────
 def assign_bucket(wh: str, doc: str) -> str:
     wh_l = wh.lower()
-    if "wareiq" in wh_l or "ekart" in wh_l:
-        return "IWIT"
-    if "to amazon fba" in wh_l:
-        return "FBA Forward"
-    if "from amazon fba" in wh_l:
-        return "FBA Reverse"
-    if "bigbasket" in wh_l:
-        return "BigBasket"
-    if str(doc).upper().startswith("SO"):
-        return "1P"
-    return "B2C"
+    if "wareiq" in wh_l or "ekart" in wh_l:   return "IWIT"
+    if "to amazon fba"   in wh_l:              return "FBA Forward"
+    if "from amazon fba" in wh_l:              return "FBA Reverse"
+    if "outward"         in wh_l:
+        return "1P" if str(doc).upper().startswith("SO") else "B2C"
+    return "Others"
 
 def age_bucket(days) -> str:
     if pd.isna(days) or days < 0:

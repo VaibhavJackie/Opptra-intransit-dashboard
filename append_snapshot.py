@@ -15,18 +15,18 @@ GRN   = DATA / "latest_grn.csv"
 HIST  = DATA / "snapshot_history.json"
 KEEP  = 90  # days of history to retain
 
-BUCKET_ORDER = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C", "BigBasket"]
+BUCKET_ORDER = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C", "Others"]
 AGE_BUCKETS  = ["0–7 Days", "8–15 Days", "16–30 Days", "31–60 Days", "60+ Days"]
 
 
 def _assign_bucket(wh, gp):
     w = str(wh).lower()
-    if "wareiq" in w or "ekart" in w:    return "IWIT"
-    if "to amazon fba"   in w:           return "FBA Forward"
-    if "from amazon fba" in w:           return "FBA Reverse"
-    if "bigbasket"       in w:           return "BigBasket"
-    if str(gp).upper().startswith("SO"): return "1P"
-    return "B2C"
+    if "wareiq" in w or "ekart" in w:   return "IWIT"
+    if "to amazon fba"   in w:          return "FBA Forward"
+    if "from amazon fba" in w:          return "FBA Reverse"
+    if "outward"         in w:
+        return "1P" if str(gp).upper().startswith("SO") else "B2C"
+    return "Others"
 
 
 def _age_bucket(days):
