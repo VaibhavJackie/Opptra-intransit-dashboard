@@ -24,7 +24,7 @@ def _assign_bucket(wh, gp):
     if "wareiq" in w or "ekart" in w:   return "IWIT"
     if "to amazon fba"   in w:          return "FBA Forward"
     if "from amazon fba" in w:          return "FBA Reverse"
-    if "outward"         in w:
+    if "outward-intransit" in w:
         return "1P" if str(gp).upper().startswith("SO") else "B2C"
     return "Others"
 

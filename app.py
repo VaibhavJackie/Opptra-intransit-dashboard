@@ -33,7 +33,7 @@ def assign_bucket(wh: str, doc: str) -> str:
     if "wareiq" in wh_l or "ekart" in wh_l:   return "IWIT"
     if "to amazon fba"   in wh_l:              return "FBA Forward"
     if "from amazon fba" in wh_l:              return "FBA Reverse"
-    if "outward"         in wh_l:
+    if "outward-intransit" in wh_l:
         return "1P" if str(doc).upper().startswith("SO") else "B2C"
     return "Others"
 
