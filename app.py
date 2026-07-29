@@ -577,13 +577,16 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("### Ageing Analysis")
 
-    age_df = fdf[fdf["Age"].notna() & (fdf["Age"] >= 0)].copy()
+    age_df = fdf[fdf["Age"].notna()].copy()
 
     # Vol / Value toggle (used by all pivot tables in this tab)
     age_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
                           horizontal=True, key="age_metric")
     val_col = "Open Value (INR)" if age_metric == "Value (₹ L)" else "Intransit_quantity"
     fmt_fn  = fmt_L if age_metric == "Value (₹ L)" else fmt_qty
+
+    _today_m_str = pd.Timestamp.today().strftime("%b %Y")      # e.g. "Jul 2026"
+    _today_q_str = str(pd.Timestamp.today().to_period("Q"))    # e.g. "2026Q3"
 
     def _piv_dim(src, grp_col, dim_col, vcol):
         t = src[src[grp_col].notna() & (src[grp_col].astype(str) != "NaT")].copy()
@@ -592,9 +595,31 @@ with tabs[3]:
 
     def _sort_piv(piv, col_type="month"):
         try:
-            cols = (sorted(piv.columns, key=lambda x: pd.to_datetime(x, format="%b %Y"))
-                    if col_type == "month" else sorted(piv.columns))
-            piv = piv[cols[::-1]]
+            if col_type == "month":
+                _all = sorted(piv.columns,
+                               key=lambda x: pd.to_datetime(x, format="%b %Y", errors="coerce"))
+                _today_dt = pd.to_datetime(_today_m_str, format="%b %Y")
+                _past   = [c for c in _all
+                           if pd.to_datetime(c, format="%b %Y", errors="coerce") <= _today_dt]
+                _future = [c for c in _all if c not in _past]
+                if _future:
+                    piv = piv.copy()
+                    piv["Upcoming"] = piv[_future].sum(axis=1)
+                    piv = piv.drop(columns=_future)
+                    _past = _past + ["Upcoming"]
+                piv = piv[_past[::-1]]           # most-recent month first; Upcoming at end
+            elif col_type == "quarter":
+                _all = sorted(piv.columns)       # "2026Q1" etc. sort lexicographically
+                _past   = [c for c in _all if c <= _today_q_str]
+                _future = [c for c in _all if c > _today_q_str]
+                if _future:
+                    piv = piv.copy()
+                    piv["Upcoming"] = piv[_future].sum(axis=1)
+                    piv = piv.drop(columns=_future)
+                    _past = _past + ["Upcoming"]
+                piv = piv[_past[::-1]]
+            else:
+                piv = piv[sorted(piv.columns)[::-1]]
         except Exception:
             pass
         piv = piv.copy()
