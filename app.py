@@ -577,7 +577,7 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("### Ageing Analysis")
 
-    age_df = fdf[fdf["Age"].notna()].copy()
+    age_df = fdf[fdf["Age"].notna() & (fdf["Age"] >= 0)].copy()
 
     # Vol / Value toggle (used by all pivot tables in this tab)
     age_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
