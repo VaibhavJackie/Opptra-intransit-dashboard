@@ -76,9 +76,9 @@ def load_df():
     df["date"] = pd.to_datetime(_raw, dayfirst=True, errors="coerce")
     _nat = df["date"].isna()
     if _nat.any():
-        df.loc[_nat, "date"] = pd.to_datetime(_raw[_nat], dayfirst=False, errors="coerce")
-    today = pd.Timestamp(dt.date.today())
-    df["Age"] = (today - df["date"]).dt.days.clip(lower=0)
+        df.loc[_nat, "date"] = pd.to_datetime(_raw[_nat], format="mixed", dayfirst=False, errors="coerce")
+    today = pd.Timestamp(dt.date.today()).normalize()
+    df["Age"] = (today - df["date"]).dt.days
     df["Age Bucket"] = df["Age"].apply(_age_bucket)
 
     # Cost
@@ -133,8 +133,8 @@ def main():
             history = []
 
     df    = load_df()
-    mtime = IT.stat().st_mtime
-    label = dt.datetime.fromtimestamp(mtime).strftime("%d %b %Y")
+    # Label = today (when UPDATE_DATA.bat ran), so label and age reference are in sync
+    label = dt.date.today().strftime("%d %b %Y")
 
     # Remove any existing entry for this date (overwrite)
     history = [h for h in history if h.get("date") != label]
