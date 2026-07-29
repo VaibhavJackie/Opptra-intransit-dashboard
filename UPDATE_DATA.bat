@@ -39,8 +39,15 @@ copy /y "%LATEST_IT%"  "data\latest_it.csv"  >nul
 copy /y "%LATEST_GRN%" "data\latest_grn.csv" >nul
 echo Copied to data/ folder.
 
+REM ── Step 3b: Append snapshot to history ──
+echo Updating snapshot history...
+python append_snapshot.py
+if errorlevel 1 (
+    echo WARNING: Snapshot append failed — continuing with git push anyway.
+)
+
 REM ── Step 4: Commit and push ──
-git add data\latest_it.csv data\latest_grn.csv data\snapshot_history.csv app.py .gitignore START_DASHBOARD.bat UPDATE_DATA.bat 2>nul
+git add data\latest_it.csv data\latest_grn.csv data\current_summary.json data\prev_summary.json data\snapshot_history.json app.py .gitignore START_DASHBOARD.bat UPDATE_DATA.bat append_snapshot.py 2>nul
 git commit -m "Data update %DATE% %TIME:~0,5%"
 git push
 

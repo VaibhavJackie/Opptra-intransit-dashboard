@@ -4,5 +4,6 @@ __pycache__/
 .env
 *.xlsx
 .DS_Store
-# Allow data CSVs (needed for Streamlit Cloud deployment)
+# Allow data files (needed for Streamlit Cloud deployment)
 !data/*.csv
+!data/*.json

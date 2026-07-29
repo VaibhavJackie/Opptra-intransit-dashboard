@@ -235,6 +235,8 @@ _DATA_DIR   = _Path(__file__).parent / "data"
 _DATA_DIR.mkdir(exist_ok=True)
 _DEFAULT_IT  = _DATA_DIR / "latest_it.csv"
 _DEFAULT_GRN = _DATA_DIR / "latest_grn.csv"
+_CURR_SUMM   = _DATA_DIR / "current_summary.json"
+_PREV_SUMM   = _DATA_DIR / "prev_summary.json"
 
 with st.sidebar:
     st.markdown("### 📂 Upload Files")
@@ -263,6 +265,13 @@ with st.sidebar:
         st.caption("Column names are case-sensitive. Extra columns are ignored.")
 
 if it_file and grn_file:
+    # Rotate: current summary → previous, before replacing the data files
+    try:
+        import shutil as _shutil
+        if _CURR_SUMM.exists():
+            _shutil.copy(_CURR_SUMM, _PREV_SUMM)
+    except Exception:
+        pass
     it_bytes  = it_file.read()
     grn_bytes = grn_file.read()
     with open(_DEFAULT_IT,  "wb") as _f: _f.write(it_bytes)
@@ -282,8 +291,37 @@ else:
 with st.spinner("Processing files…"):
     df, missing_skus, avg_cost = process(it_bytes, grn_bytes)
 
-upload_label = _dt.date.today().strftime("%d %b %Y")
+_file_mtime  = _DEFAULT_IT.stat().st_mtime if _DEFAULT_IT.exists() else None
+upload_label = (_dt.datetime.fromtimestamp(_file_mtime).strftime("%d %b %Y")
+                if _file_mtime else _dt.date.today().strftime("%d %b %Y"))
 today_ts = pd.Timestamp.today().normalize()
+
+# ── Save current summary (for DoD comparison on next upload) ─────────────────
+def _save_summary(df, label):
+    gt30 = df[df["Age"] > 30]
+    summ = {
+        "upload_date": label,
+        "total_vol":   int(df["Intransit_quantity"].sum()),
+        "total_val":   float(df["Open Value (INR)"].fillna(0).sum()),
+        "gt30_vol":    int(gt30["Intransit_quantity"].sum()),
+        "gt30_val":    float(gt30["Open Value (INR)"].fillna(0).sum()),
+        "by_type_vol": df.groupby("Main Bucket")["Intransit_quantity"].sum().to_dict(),
+        "by_type_val": df.groupby("Main Bucket")["Open Value (INR)"].sum().fillna(0).to_dict(),
+    }
+    try:
+        with open(_CURR_SUMM, "w") as _f: _json.dump(summ, _f)
+    except Exception:
+        pass
+
+_save_summary(df, upload_label)
+
+# ── Load previous summary for DoD delta ──────────────────────────────────────
+_prev = None
+if _PREV_SUMM.exists():
+    try:
+        with open(_PREV_SUMM) as _f: _prev = _json.load(_f)
+    except Exception:
+        pass
 
 # ── Global Filter Bar (above tabs) ───────────────────────────────────────────
 _all_brands_list = sorted(df["brand"].dropna().astype(str).unique().tolist())
@@ -315,7 +353,7 @@ if sel_gp != "All":      fdf = fdf[fdf["GP_PO"].astype(str) == sel_gp]
 # ════════════════════════════════════════════════════════════════════════════
 #  TAB LAYOUT
 # ════════════════════════════════════════════════════════════════════════════
-tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Ageing", "⚠️ Validation", "⬇️ Download"])
+tabs = st.tabs(["📊 Overview", "🏷️ Brand", "📍 Facility", "⏱️ Ageing", "📈 Movements", "⚠️ Validation", "⬇️ Download"])
 
 # ── TAB 1: OVERVIEW ─────────────────────────────────────────────────────────
 with tabs[0]:
@@ -330,13 +368,30 @@ with tabs[0]:
     gt30_pct  = (gt30_val / total_val * 100) if total_val else 0
     missing_cost_units = fdf[fdf["Open Value (INR)"].isna() | (fdf["Open Value (INR)"] == 0)]["Intransit_quantity"].sum()
 
+    _prev_lbl = f"vs {_prev['upload_date']}" if _prev else None
+
+    def _dod_vol(curr, key):
+        if not _prev or key not in _prev: return None
+        d = int(curr) - int(_prev[key])
+        return f"{d:+,} {_prev_lbl}"
+
+    def _dod_val(curr, key):
+        if not _prev or key not in _prev: return None
+        d = curr - _prev[key]
+        sign = "+" if d >= 0 else ""
+        return f"{sign}₹{d/100000:.1f}L {_prev_lbl}"
+
     k = st.columns(5)
-    k[0].metric("📦 Total Units",        fmt_qty(total_vol))
-    k[1].metric("💰 Total Value",        fmt_L(total_val))
-    k[2].metric("⚠️ >30 Days Units",     fmt_qty(gt30_vol))
-    k[3].metric("⚠️ >30 Days Value",     fmt_L(gt30_val),
-                delta=f"{gt30_pct:.1f}% of total", delta_color="inverse")
-    k[4].metric("❓ Units Missing Cost",  fmt_qty(missing_cost_units))
+    k[0].metric("📦 Total Units",       fmt_qty(total_vol),
+                delta=_dod_vol(total_vol, "total_vol"), delta_color="off")
+    k[1].metric("💰 Total Value",       fmt_L(total_val),
+                delta=_dod_val(total_val, "total_val"), delta_color="off")
+    k[2].metric("⚠️ >30 Days Units",    fmt_qty(gt30_vol),
+                delta=_dod_vol(gt30_vol, "gt30_vol"), delta_color="inverse")
+    k[3].metric("⚠️ >30 Days Value",    fmt_L(gt30_val),
+                delta=_dod_val(gt30_val, "gt30_val") or f"{gt30_pct:.1f}% of total",
+                delta_color="inverse")
+    k[4].metric("❓ Units Missing Cost", fmt_qty(missing_cost_units))
 
     st.divider()
 
@@ -584,8 +639,157 @@ with tabs[3]:
     fq = _sort_piv(_piv_dim(age_df, "Quarter", "Facility", val_col), "quarter")
     st.dataframe(fq.map(fmt_fn), use_container_width=True)
 
-# ── TAB 5: VALIDATION ───────────────────────────────────────────────────────
+# ── TAB 5: MOVEMENTS ────────────────────────────────────────────────────────
 with tabs[4]:
+    st.markdown("### 📈 Movements — WoW / DoD Tracker")
+    st.caption("Tracks how your in-transit position changes each time you run UPDATE_DATA.bat.")
+
+    _HIST_FILE = _DATA_DIR / "snapshot_history.json"
+    _hist = []
+    if _HIST_FILE.exists():
+        try:
+            with open(_HIST_FILE) as _f:
+                _hist = _json.load(_f)
+        except Exception:
+            _hist = []
+
+    if len(_hist) < 2:
+        st.info(
+            "Not enough snapshots yet. "
+            "Run **UPDATE_DATA.bat** on at least 2 separate days — "
+            "each run automatically adds an entry to the history."
+        )
+    else:
+        # Parse dates once
+        for _h in _hist:
+            _h["_d"] = _dt.datetime.strptime(_h["date"], "%d %b %Y").date()
+        _hist.sort(key=lambda _h: _h["_d"])
+        _curr = _hist[-1]
+
+        # ── Controls ──
+        mv_c1, mv_c2 = st.columns([1, 3])
+        with mv_c1:
+            mv_mode   = st.radio("Compare against", ["DoD (prev entry)", "WoW (7 days ago)"],
+                                 key="mv_mode")
+            mv_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
+                                 key="mv_metric")
+
+        # Select comparison snapshot
+        if mv_mode == "DoD (prev entry)":
+            _comp = _hist[-2]
+        else:
+            _target = _curr["_d"] - _dt.timedelta(days=7)
+            _comp   = min(_hist[:-1], key=lambda _h: abs((_h["_d"] - _target).days))
+
+        _is_val   = mv_metric == "Value (₹ L)"
+        mv_tkey   = "total_val"   if _is_val else "total_vol"
+        mv_tkey30 = "gt30_val"    if _is_val else "gt30_vol"
+        mv_bytype = "by_type_val" if _is_val else "by_type_vol"
+        mv_fmt    = fmt_L if _is_val else fmt_qty
+        def _mv_delta(d):
+            if _is_val:
+                return f"{'+'if d>=0 else ''}₹{d/1e5:.1f}L"
+            return f"{d:+,}"
+
+        # ── KPI summary row ──
+        _cv  = _curr[mv_tkey]
+        _pv  = _comp[mv_tkey]
+        _d   = _cv - _pv
+        _cv30 = _curr[mv_tkey30]
+        _pv30 = _comp[mv_tkey30]
+        _d30  = _cv30 - _pv30
+
+        with mv_c2:
+            _mk = st.columns(4)
+            _mk[0].metric(f"Current ({_curr['date']})", mv_fmt(_cv))
+            _mk[1].metric(f"Comparison ({_comp['date']})", mv_fmt(_pv))
+            _mk[2].metric("Net Movement", _mv_delta(_d),
+                          delta=_mv_delta(_d), delta_color="off")
+            _mk[3].metric(">30d Movement", _mv_delta(_d30),
+                          delta=_mv_delta(_d30), delta_color="inverse")
+
+        st.divider()
+
+        # ── By-Type delta table ──
+        st.markdown(f"#### Movement by Type — {_curr['date']} vs {_comp['date']}")
+        _c_type = _curr.get(mv_bytype, {})
+        _p_type = _comp.get(mv_bytype, {})
+        _type_rows = []
+        for _t in BUCKET_ORDER:
+            _cv_t = _c_type.get(_t, 0)
+            _pv_t = _p_type.get(_t, 0)
+            _dt_t = _cv_t - _pv_t
+            _type_rows.append({
+                "Type":                            _t,
+                f"Current ({_curr['date']})":      mv_fmt(_cv_t),
+                f"Comparison ({_comp['date']})":   mv_fmt(_pv_t),
+                "Movement":                        _mv_delta(_dt_t),
+            })
+        _tot_c = sum(_c_type.get(_t, 0) for _t in BUCKET_ORDER)
+        _tot_p = sum(_p_type.get(_t, 0) for _t in BUCKET_ORDER)
+        _type_rows.insert(0, {
+            "Type":                           "TOTAL",
+            f"Current ({_curr['date']})":     mv_fmt(_tot_c),
+            f"Comparison ({_comp['date']})":  mv_fmt(_tot_p),
+            "Movement":                       _mv_delta(_tot_c - _tot_p),
+        })
+        st.dataframe(pd.DataFrame(_type_rows), hide_index=True, use_container_width=True)
+
+        st.divider()
+
+        # ── Trend chart ──
+        st.markdown(f"#### Trend Over Time — {mv_metric}")
+        _trend_rows = []
+        for _h in _hist:
+            _row = {"Date": _h["date"], "_date_parsed": _h["_d"]}
+            for _t in BUCKET_ORDER:
+                _v = _h.get(mv_bytype, {}).get(_t, 0)
+                _row[_t] = (_v / 1e5) if _is_val else _v
+            _tv = _h[mv_tkey]
+            _row["Total"] = (_tv / 1e5) if _is_val else _tv
+            _trend_rows.append(_row)
+        _tdf = pd.DataFrame(_trend_rows).sort_values("_date_parsed")
+
+        _active = [_t for _t in BUCKET_ORDER if _tdf[_t].sum() > 0]
+        _fig_trend = go.Figure()
+        for _t in _active:
+            _fig_trend.add_trace(go.Scatter(
+                x=_tdf["Date"], y=_tdf[_t],
+                mode="lines+markers", name=_t,
+                line=dict(color=BUCKET_COLORS.get(_t, "#6B7280"), width=2),
+                marker=dict(size=6),
+            ))
+        _fig_trend.add_trace(go.Scatter(
+            x=_tdf["Date"], y=_tdf["Total"],
+            mode="lines+markers", name="Total",
+            line=dict(color="#131A48", width=3, dash="dot"),
+            marker=dict(size=7),
+        ))
+        _fig_trend.update_layout(
+            height=380, paper_bgcolor="#F8FAFC", plot_bgcolor="#F8FAFC",
+            yaxis_title="₹ Lakhs" if _is_val else "Units",
+            xaxis_title="",
+            margin=dict(t=20, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            font=dict(family="sans-serif"),
+        )
+        st.plotly_chart(_fig_trend, use_container_width=True)
+
+        # ── Full history table (collapsed) ──
+        with st.expander(f"📋 Full snapshot history ({len(_hist)} entries)"):
+            _hist_rows = []
+            for _h in reversed(_hist):
+                _hrow = {"Date": _h["date"]}
+                _hrow["Total"] = mv_fmt(_h[mv_tkey])
+                _hrow[">30d"]  = mv_fmt(_h[mv_tkey30])
+                for _t in BUCKET_ORDER:
+                    _hrow[_t] = mv_fmt(_h.get(mv_bytype, {}).get(_t, 0))
+                _hist_rows.append(_hrow)
+            st.dataframe(pd.DataFrame(_hist_rows), hide_index=True, use_container_width=True)
+
+
+# ── TAB 6: VALIDATION ───────────────────────────────────────────────────────
+with tabs[5]:
     st.markdown("### Validation Report")
 
     checks = {
@@ -620,8 +824,8 @@ with tabs[4]:
     bc = df.groupby("Main Bucket").size().reset_index(name="Rows")
     st.dataframe(bc, hide_index=True, use_container_width=True)
 
-# ── TAB 6: DOWNLOAD ─────────────────────────────────────────────────────────
-with tabs[5]:
+# ── TAB 7: DOWNLOAD ─────────────────────────────────────────────────────────
+with tabs[6]:
     st.markdown("### Download Output")
     st.markdown(f"""
 Each download creates two dated tabs that won't overwrite your previous uploads:
