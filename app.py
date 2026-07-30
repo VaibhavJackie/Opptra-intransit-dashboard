@@ -72,12 +72,14 @@ def process(it_bytes: bytes, grn_bytes: bytes):
     # capitalisation (Brand vs brand, Facility vs facility, etc.) all work.
     _EXPECTED = {
         "brand": "brand", "intransit_quantity": "Intransit_quantity",
-        "facility": "Facility", "from_facility": "Facility",   # from_facility → Facility
-        "to_facility": "To Facility",                           # keep to_facility separately
+        "facility": "Facility", "from_facility": "Facility",
+        "to_facility": "To Facility",
         "gp_po": "GP_PO", "warehouse": "warehouse",
         "sku": "sku", "date": "date", "quantity": "quantity",
         "received_quantity": "received_quantity",
-        "reference": "Reference",                               # reference ID column
+        "reference": "Reference",
+        "item_name": "Item Name", "item name": "Item Name",
+        "product_name": "Item Name", "description": "Item Name",
     }
     df = df.rename(columns={c: _EXPECTED[c.lower()] for c in df.columns if c.lower() in _EXPECTED})
 
@@ -170,29 +172,31 @@ def styled_metric(label, value, sub=""):
 def build_excel(df: pd.DataFrame, avg_cost: pd.DataFrame, upload_date: str) -> bytes:
     output = io.BytesIO()
 
-    # In-Transit summary
-    it_summary = (
-        df.groupby(["Main Bucket", "sku", "brand", "Facility", "warehouse", "Age Bucket"])
-        .agg(Volume=("Intransit_quantity", "sum"), Value=("Open Value (INR)", "sum"),
-             Avg_Cost=("Average Cost", "mean"))
-        .reset_index()
-        .sort_values("Value", ascending=False)
-    )
+    _g = lambda col: df[col] if col in df.columns else pd.Series("", index=df.index)
 
-    # Raw Data – preferred order first, then any extra columns from the uploaded file
-    _preferred = [
-        "date", "GP_PO", "sku", "Facility", "To Facility", "warehouse",
-        "quantity", "received_quantity", "Intransit_quantity", "brand", "Reference",
-        "Main Bucket", "Average Cost", "Open Value (INR)", "Delta Cost", "Age", "Age Bucket",
-        "Month", "Quarter", "Year", "Document Type", "Movement Type", "Warehouse Bucket",
-        "Current Month Flag", "Previous Month Flag", "Quarter Flag",
-    ]
-    raw_cols = [c for c in _preferred if c in df.columns]
-    raw_cols += [c for c in df.columns if c not in raw_cols]
+    dl = pd.DataFrame({
+        "From Facility":    _g("Facility"),
+        "Gatepass Code":    _g("GP_PO"),
+        "Type":             _g("Main Bucket"),
+        "Created At":       (df["date"].dt.strftime("%d-%b-%Y")
+                             if "date" in df.columns else ""),
+        "Period":           _g("Month"),
+        "To Party":         _g("To Facility"),
+        "Brand":            _g("brand"),
+        "Item Name":        _g("Item Name"),
+        "SKU Code":         _g("sku"),
+        "Dispatched Qty":   pd.to_numeric(_g("quantity"),           errors="coerce").fillna(0).astype(int),
+        "Received Qty":     pd.to_numeric(_g("received_quantity"),  errors="coerce").fillna(0).astype(int),
+        "Qty Delta":        pd.to_numeric(_g("Intransit_quantity"), errors="coerce").fillna(0).astype(int),
+        "Unit Price (GRN)": pd.to_numeric(_g("Average Cost"),       errors="coerce").round(2),
+        "Price Found":      (df["Average Cost"].notna().map({True: "Yes", False: "No"})
+                             if "Average Cost" in df.columns
+                             else pd.Series("No", index=df.index)),
+        "Value Delta":      pd.to_numeric(_g("Open Value (INR)"),   errors="coerce").round(2),
+    })
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        it_summary.to_excel(writer, sheet_name=f"In-Transit - {upload_date}", index=False)
-        df[raw_cols].to_excel(writer, sheet_name=f"Raw Data - {upload_date}", index=False)
+        dl.to_excel(writer, sheet_name=f"In-Transit {upload_date}", index=False)
         avg_cost.to_excel(writer, sheet_name="SKU Cost Mapping", index=False)
 
         # Widen columns
