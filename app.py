@@ -180,24 +180,19 @@ def build_excel(df: pd.DataFrame, avg_cost: pd.DataFrame, upload_date: str) -> b
     _g = lambda col: df[col] if col in df.columns else pd.Series("", index=df.index)
 
     dl = pd.DataFrame({
-        "From Facility":    _g("Facility"),
-        "Gatepass Code":    _g("GP_PO"),
-        "Type":             _g("Main Bucket"),
-        "Created At":       (df["date"].dt.strftime("%d-%b-%Y")
-                             if "date" in df.columns else ""),
-        "Period":           _g("Month"),
-        "To Party":         _g("To Facility"),
-        "Brand":            _g("brand"),
-        "Item Name":        _g("Item Name"),
-        "SKU Code":         _g("sku"),
-        "Dispatched Qty":   pd.to_numeric(_g("quantity"),           errors="coerce").fillna(0).astype(int),
-        "Received Qty":     pd.to_numeric(_g("received_quantity"),  errors="coerce").fillna(0).astype(int),
-        "Qty Delta":        pd.to_numeric(_g("Intransit_quantity"), errors="coerce").fillna(0).astype(int),
-        "Unit Price (GRN)": pd.to_numeric(_g("Average Cost"),       errors="coerce").round(2),
-        "Price Found":      (df["Average Cost"].notna().map({True: "Yes", False: "No"})
-                             if "Average Cost" in df.columns
-                             else pd.Series("No", index=df.index)),
-        "Value Delta":      pd.to_numeric(_g("Open Value (INR)"),   errors="coerce").round(2),
+        "date":                 (df["date"].dt.strftime("%d-%b-%Y")
+                                 if "date" in df.columns else ""),
+        "GP_PO":                _g("GP_PO"),
+        "sku":                  _g("sku"),
+        "from_facility":        _g("Facility"),
+        "to_facility":          _g("To Facility"),
+        "warehouse":            _g("warehouse"),
+        "quantity":             pd.to_numeric(_g("quantity"),           errors="coerce").fillna(0).astype(int),
+        "received_quantity":    pd.to_numeric(_g("received_quantity"),  errors="coerce").fillna(0).astype(int),
+        "Intransit_quantity":   pd.to_numeric(_g("Intransit_quantity"), errors="coerce").fillna(0).astype(int),
+        "Reference":            _g("Reference"),
+        "Brand":                _g("brand"),
+        "Type":                 _g("Main Bucket"),
     })
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
