@@ -15,7 +15,7 @@ GRN   = DATA / "latest_grn.csv"
 HIST  = DATA / "snapshot_history.json"
 KEEP  = 90  # days of history to retain
 
-BUCKET_ORDER = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C", "Others"]
+FIXED_BUCKETS = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C"]
 AGE_BUCKETS  = ["0–7 Days", "8–15 Days", "16–30 Days", "31–60 Days", "60+ Days"]
 
 
@@ -26,7 +26,8 @@ def _assign_bucket(wh, gp):
     if "from amazon fba" in w:          return "FBA Reverse"
     if "outward-intransit" in w:
         return "1P" if str(gp).upper().startswith("SO") else "B2C"
-    return "Others"
+    _label = str(wh).strip()
+    return _label if _label else "Unknown"
 
 
 def _age_bucket(days):

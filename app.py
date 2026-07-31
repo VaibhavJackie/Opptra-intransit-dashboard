@@ -15,15 +15,14 @@ st.set_page_config(
 )
 
 # ─── Constants ───────────────────────────────────────────────────────────────
-BUCKET_ORDER = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C", "Others"]
-AGE_BUCKETS  = ["0–7 Days", "8–15 Days", "16–30 Days", "31–60 Days", "60+ Days"]
+FIXED_BUCKETS = ["IWIT", "FBA Forward", "FBA Reverse", "1P", "B2C"]
+AGE_BUCKETS   = ["0–7 Days", "8–15 Days", "16–30 Days", "31–60 Days", "60+ Days"]
 BUCKET_COLORS = {
     "IWIT":        "#3B82F6",
     "FBA Forward": "#10B981",
     "FBA Reverse": "#F59E0B",
     "1P":          "#8B5CF6",
     "B2C":         "#EF4444",
-    "Others":      "#6B7280",
 }
 AGE_COLORS = ["#22c55e", "#84cc16", "#f97316", "#ef4444", "#7c3aed"]
 
@@ -35,7 +34,8 @@ def assign_bucket(wh: str, doc: str) -> str:
     if "from amazon fba" in wh_l:              return "FBA Reverse"
     if "outward-intransit" in wh_l:
         return "1P" if str(doc).upper().startswith("SO") else "B2C"
-    return "Others"
+    _label = str(wh).strip()
+    return _label if _label else "Unknown"
 
 def age_bucket(days) -> str:
     if pd.isna(days) or days < 0:
@@ -289,6 +289,11 @@ else:
 
 with st.spinner("Processing files…"):
     df, missing_skus, avg_cost = process(it_bytes, grn_bytes)
+
+# Fixed buckets first; then any extra warehouse values found in the data
+_extra_buckets = sorted([b for b in df["Main Bucket"].dropna().unique()
+                          if b not in FIXED_BUCKETS and str(b).strip()])
+BUCKET_ORDER = FIXED_BUCKETS + _extra_buckets
 
 _file_mtime  = _DEFAULT_IT.stat().st_mtime if _DEFAULT_IT.exists() else None
 upload_label = (_dt.datetime.fromtimestamp(_file_mtime).strftime("%d %b %Y")
