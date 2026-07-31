@@ -32,8 +32,10 @@ def assign_bucket(wh: str, doc: str) -> str:
     if "wareiq" in wh_l or "ekart" in wh_l:   return "IWIT"
     if "to amazon fba"   in wh_l:              return "FBA Forward"
     if "from amazon fba" in wh_l:              return "FBA Reverse"
+    if "amazon fba"      in wh_l:              return "FBA Forward"
     if "outward-intransit" in wh_l:
         return "1P" if str(doc).upper().startswith("SO") else "B2C"
+    if wh_l == "b2c":                          return "B2C"
     _label = str(wh).strip()
     return _label if _label else "Unknown"
 
@@ -89,6 +91,11 @@ def process(it_bytes: bytes, grn_bytes: bytes):
 
     df["Intransit_quantity"] = pd.to_numeric(df["Intransit_quantity"], errors="coerce").fillna(0)
 
+    # Filter BEFORE dedup so zero-intransit rows don't corrupt warehouse assignment
+    # (e.g. GP_PO+SKU with many "Amazon FBA" qty=0 rows + one "To Amazon FBA" qty>0 row
+    #  would otherwise inherit the wrong warehouse after groupby "first")
+    df = df[df["Intransit_quantity"] > 0].copy()
+
     # Deduplicate on GP_PO + SKU — sum quantities, keep first for metadata columns
     _meta_cols = [c for c in df.columns if c not in
                   ("Intransit_quantity", "quantity", "received_quantity")]
@@ -97,8 +104,6 @@ def process(it_bytes: bytes, grn_bytes: bytes):
                   "Intransit_quantity": "sum",
                   "quantity":           "sum" if "quantity" in df.columns else "first",
                   "received_quantity":  "sum" if "received_quantity" in df.columns else "first"}))
-
-    df = df[df["Intransit_quantity"] > 0].copy()
 
     _raw_date  = df["date"].copy()
     df["date"] = pd.to_datetime(_raw_date, dayfirst=True, errors="coerce")
