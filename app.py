@@ -208,6 +208,110 @@ def build_excel(df: pd.DataFrame, avg_cost: pd.DataFrame, upload_date: str) -> b
 
     return output.getvalue()
 
+# ─── GitHub auto-sync ────────────────────────────────────────────────────────
+def _build_snapshot_entry(it_bytes: bytes, grn_bytes: bytes) -> dict:
+    """Build snapshot dict from raw CSV bytes (same logic as append_snapshot.py)."""
+    _df = pd.read_csv(io.BytesIO(it_bytes), low_memory=False)
+    _df.columns = _df.columns.str.strip()
+    _M = {"brand":"brand","intransit_quantity":"Intransit_quantity","facility":"Facility",
+          "from_facility":"Facility","to_facility":"To Facility","gp_po":"GP_PO",
+          "warehouse":"warehouse","sku":"sku","date":"date","quantity":"quantity",
+          "received_quantity":"received_quantity","reference":"Reference"}
+    _df = _df.rename(columns={c: _M[c.lower()] for c in _df.columns if c.lower() in _M})
+    _df["Intransit_quantity"] = pd.to_numeric(_df["Intransit_quantity"], errors="coerce").fillna(0)
+    _df = _df[_df["Intransit_quantity"] > 0].copy()
+    _meta = [c for c in _df.columns if c not in ("Intransit_quantity","quantity","received_quantity")]
+    _agg = {**{c:"first" for c in _meta if c not in ("GP_PO","sku")},"Intransit_quantity":"sum"}
+    if "quantity"          in _df.columns: _agg["quantity"]          = "sum"
+    if "received_quantity" in _df.columns: _agg["received_quantity"] = "sum"
+    _df = _df.groupby(["GP_PO","sku"], as_index=False).agg(_agg)
+    _df["Main Bucket"] = [assign_bucket(str(w), str(d))
+                          for w, d in zip(_df["warehouse"].fillna(""), _df["GP_PO"].fillna(""))]
+    try:
+        _grn = pd.read_csv(io.BytesIO(grn_bytes), low_memory=False)
+        _grn.columns = _grn.columns.str.strip()
+        _grn = _grn.rename(columns={c: c.lower() for c in _grn.columns})
+        _grn["cost_pu"] = pd.to_numeric(_grn["cost_pu"], errors="coerce")
+        _cmap = _grn.groupby("sku")["cost_pu"].mean().to_dict()
+        _df["Average Cost"] = _df["sku"].map(_cmap)
+        _df["Open Value (INR)"] = _df["Intransit_quantity"] * _df["Average Cost"].fillna(0)
+    except Exception:
+        _df["Average Cost"] = 0.0
+        _df["Open Value (INR)"] = 0.0
+    _raw = _df["date"].copy()
+    _df["date"] = pd.to_datetime(_raw, dayfirst=True, errors="coerce")
+    _nat = _df["date"].isna()
+    if _nat.any():
+        _df.loc[_nat, "date"] = pd.to_datetime(_raw[_nat], dayfirst=False, errors="coerce")
+    _today = pd.Timestamp(_dt.date.today()).normalize()
+    _df["Age"] = (_today - _df["date"]).dt.days
+    def _ab(d):
+        if pd.isna(d) or d < 0: return "Unknown"
+        if d <= 7:  return "0–7 Days"
+        if d <= 15: return "8–15 Days"
+        if d <= 30: return "16–30 Days"
+        if d <= 60: return "31–60 Days"
+        return "60+ Days"
+    _df["Age Bucket"] = _df["Age"].apply(_ab)
+    _gt30 = _df[_df["Age"] > 30]
+    def _sv(grp): return {str(k): int(v)   for k, v in _df.groupby(grp)["Intransit_quantity"].sum().items()}
+    def _vv(grp): return {str(k): float(v) for k, v in _df.groupby(grp)["Open Value (INR)"].sum().items()}
+    return {
+        "date":          _dt.date.today().strftime("%d %b %Y"),
+        "timestamp":     _dt.datetime.now().isoformat(),
+        "total_vol":     int(_df["Intransit_quantity"].sum()),
+        "total_val":     float(_df["Open Value (INR)"].sum()),
+        "gt30_vol":      int(_gt30["Intransit_quantity"].sum()),
+        "gt30_val":      float(_gt30["Open Value (INR)"].sum()),
+        "by_type_vol":   _sv("Main Bucket"),
+        "by_type_val":   _vv("Main Bucket"),
+        "by_brand_vol":  _sv("brand") if "brand" in _df.columns else {},
+        "by_brand_val":  _vv("brand") if "brand" in _df.columns else {},
+        "by_bucket_vol": _sv("Age Bucket"),
+        "by_bucket_val": _vv("Age Bucket"),
+    }
+
+
+def _push_to_github(it_bytes: bytes, grn_bytes: bytes, today_label: str):
+    """Push IT + GRN + updated snapshot to GitHub. Returns (ok, message)."""
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        if not token:
+            return False, "Add GITHUB_TOKEN to Streamlit secrets to enable auto-sync"
+        from github import Github, GithubException
+        g = Github(token, timeout=120)
+        repo = g.get_repo("VaibhavJackie/Opptra-intransit-dashboard")
+        snap = _build_snapshot_entry(it_bytes, grn_bytes)
+        try:
+            _hf = repo.get_contents("data/snapshot_history.json")
+            _hist = _json.loads(_hf.decoded_content.decode())
+            _hsha = _hf.sha
+        except GithubException:
+            _hist = []; _hsha = None
+        _hist = [h for h in _hist if h.get("date") != snap["date"]]
+        _hist.append(snap)
+        _hist.sort(key=lambda h: _dt.datetime.strptime(h["date"], "%d %b %Y"))
+        _cut = _dt.date.today() - _dt.timedelta(days=90)
+        _hist = [h for h in _hist if _dt.datetime.strptime(h["date"], "%d %b %Y").date() >= _cut]
+        _snap_bytes = _json.dumps(_hist, indent=2).encode()
+        _msg = f"Data update {today_label}"
+        def _upsert(path, content, known_sha=None):
+            _sha = known_sha
+            if _sha is None:
+                try: _sha = repo.get_contents(path).sha
+                except GithubException: _sha = None
+            if _sha:
+                repo.update_file(path, _msg, content, _sha)
+            else:
+                repo.create_file(path, _msg, content)
+        _upsert("data/latest_it.csv",          it_bytes)
+        _upsert("data/latest_grn.csv",         grn_bytes)
+        _upsert("data/snapshot_history.json",  _snap_bytes, _hsha)
+        return True, f"Synced — {snap['total_vol']:,} units · ₹{snap['total_val']/1e5:.1f}L"
+    except Exception as _e:
+        return False, f"GitHub sync failed: {_e}"
+
+
 # ─── UI ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -276,7 +380,13 @@ if it_file and grn_file:
     with open(_DEFAULT_IT,  "wb") as _f: _f.write(it_bytes)
     with open(_DEFAULT_GRN, "wb") as _f: _f.write(grn_bytes)
     st.cache_data.clear()
-    st.sidebar.success("Files saved — all viewers will see this data on refresh.")
+    with st.sidebar.spinner("Saving & syncing to GitHub…"):
+        _ok, _sync_msg = _push_to_github(it_bytes, grn_bytes, _dt.date.today().strftime("%d %b %Y"))
+    if _ok:
+        st.sidebar.success(f"✅ {_sync_msg} — all users will see new data in ~2 min")
+    else:
+        st.sidebar.warning(f"⚠️ {_sync_msg}")
+        st.sidebar.info("Data saved locally. Run UPDATE_DATA.bat to persist it.")
 elif _DEFAULT_IT.exists() and _DEFAULT_GRN.exists():
     with open(_DEFAULT_IT,  "rb") as _f: it_bytes  = _f.read()
     with open(_DEFAULT_GRN, "rb") as _f: grn_bytes = _f.read()
