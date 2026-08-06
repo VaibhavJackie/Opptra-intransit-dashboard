@@ -368,25 +368,28 @@ with st.sidebar:
         st.caption("Column names are case-sensitive. Extra columns are ignored.")
 
 if it_file and grn_file:
-    # Rotate: current summary → previous, before replacing the data files
-    try:
-        import shutil as _shutil
-        if _CURR_SUMM.exists():
-            _shutil.copy(_CURR_SUMM, _PREV_SUMM)
-    except Exception:
-        pass
     it_bytes  = it_file.read()
     grn_bytes = grn_file.read()
-    with open(_DEFAULT_IT,  "wb") as _f: _f.write(it_bytes)
-    with open(_DEFAULT_GRN, "wb") as _f: _f.write(grn_bytes)
-    st.cache_data.clear()
-    with st.sidebar.spinner("Saving & syncing to GitHub…"):
-        _ok, _sync_msg = _push_to_github(it_bytes, grn_bytes, _dt.date.today().strftime("%d %b %Y"))
-    if _ok:
-        st.sidebar.success(f"✅ {_sync_msg} — all users will see new data in ~2 min")
-    else:
-        st.sidebar.warning(f"⚠️ {_sync_msg}")
-        st.sidebar.info("Data saved locally. Run UPDATE_DATA.bat to persist it.")
+    # Only process a new upload once — file_uploader re-fires on every widget interaction
+    _fhash = hash(it_bytes[:2048])
+    if st.session_state.get("_last_upload_hash") != _fhash:
+        st.session_state["_last_upload_hash"] = _fhash
+        try:
+            import shutil as _shutil
+            if _CURR_SUMM.exists():
+                _shutil.copy(_CURR_SUMM, _PREV_SUMM)
+        except Exception:
+            pass
+        with open(_DEFAULT_IT,  "wb") as _f: _f.write(it_bytes)
+        with open(_DEFAULT_GRN, "wb") as _f: _f.write(grn_bytes)
+        st.cache_data.clear()
+        with st.sidebar.spinner("Saving & syncing to GitHub…"):
+            _ok, _sync_msg = _push_to_github(it_bytes, grn_bytes, _dt.date.today().strftime("%d %b %Y"))
+        if _ok:
+            st.sidebar.success(f"✅ {_sync_msg} — all users will see new data in ~2 min")
+        else:
+            st.sidebar.warning(f"⚠️ {_sync_msg}")
+            st.sidebar.info("Data saved locally. Run UPDATE_DATA.bat to persist it.")
 elif _DEFAULT_IT.exists() and _DEFAULT_GRN.exists():
     with open(_DEFAULT_IT,  "rb") as _f: it_bytes  = _f.read()
     with open(_DEFAULT_GRN, "rb") as _f: grn_bytes = _f.read()
