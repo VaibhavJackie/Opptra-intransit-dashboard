@@ -275,14 +275,17 @@ def _build_snapshot_entry(it_bytes: bytes, grn_bytes: bytes) -> dict:
 def _push_to_github(it_bytes: bytes, grn_bytes: bytes, today_label: str):
     """Push IT + GRN + updated snapshot to GitHub. Returns (ok, message)."""
     try:
-        token = st.secrets.get("GITHUB_TOKEN", "")
+        token = str(st.secrets.get("GITHUB_TOKEN", "")).strip()
         if not token:
             return False, "Add GITHUB_TOKEN to Streamlit secrets to enable auto-sync"
         import base64 as _b64
+        import traceback as _tb
         import requests as _req
         _REPO  = "VaibhavJackie/Opptra-intransit-dashboard"
         _API   = f"https://api.github.com/repos/{_REPO}/contents"
-        _hdrs  = {"Authorization": f"token {token}",
+        # encode token to ASCII to catch bad-paste issues before HTTP layer does
+        _tok   = token.encode("ascii").decode("ascii")
+        _hdrs  = {"Authorization": f"token {_tok}",
                   "Accept": "application/vnd.github+json"}
         _msg   = f"Data update {today_label}"
 
@@ -322,7 +325,8 @@ def _push_to_github(it_bytes: bytes, grn_bytes: bytes, today_label: str):
         _upsert("data/snapshot_history.json", _snap_bytes, _hsha)
         return True, f"Synced — {snap['total_vol']:,} units · Rs.{snap['total_val']/1e5:.1f}L"
     except Exception as _e:
-        return False, f"GitHub sync failed: {_e}"
+        _loc = _tb.format_exc().strip().splitlines()[-1] if "_tb" in dir() else str(type(_e).__name__)
+        return False, f"GitHub sync failed [{_loc}]: {_e}"
 
 
 # ─── UI ──────────────────────────────────────────────────────────────────────
