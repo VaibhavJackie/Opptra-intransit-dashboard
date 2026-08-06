@@ -278,36 +278,49 @@ def _push_to_github(it_bytes: bytes, grn_bytes: bytes, today_label: str):
         token = st.secrets.get("GITHUB_TOKEN", "")
         if not token:
             return False, "Add GITHUB_TOKEN to Streamlit secrets to enable auto-sync"
-        from github import Github, GithubException
-        g = Github(token, timeout=120)
-        repo = g.get_repo("VaibhavJackie/Opptra-intransit-dashboard")
+        import base64 as _b64
+        import requests as _req
+        _REPO  = "VaibhavJackie/Opptra-intransit-dashboard"
+        _API   = f"https://api.github.com/repos/{_REPO}/contents"
+        _hdrs  = {"Authorization": f"token {token}",
+                  "Accept": "application/vnd.github+json"}
+        _msg   = f"Data update {today_label}"
+
+        def _get_sha(path):
+            r = _req.get(f"{_API}/{path}", headers=_hdrs, timeout=30)
+            return r.json().get("sha") if r.status_code == 200 else None
+
+        def _upsert(path, content_bytes, known_sha=None):
+            sha = known_sha if known_sha is not None else _get_sha(path)
+            payload = {"message": _msg,
+                       "content": _b64.b64encode(content_bytes).decode("ascii")}
+            if sha:
+                payload["sha"] = sha
+            r = _req.put(f"{_API}/{path}", json=payload, headers=_hdrs, timeout=120)
+            r.raise_for_status()
+
         snap = _build_snapshot_entry(it_bytes, grn_bytes)
-        try:
-            _hf = repo.get_contents("data/snapshot_history.json")
-            _hist = _json.loads(_hf.decoded_content.decode())
-            _hsha = _hf.sha
-        except GithubException:
+
+        # fetch current snapshot history from GitHub
+        _hr = _req.get(f"{_API}/data/snapshot_history.json", headers=_hdrs, timeout=30)
+        if _hr.status_code == 200:
+            _hdata = _hr.json()
+            _hist  = _json.loads(_b64.b64decode(_hdata["content"]).decode())
+            _hsha  = _hdata["sha"]
+        else:
             _hist = []; _hsha = None
+
         _hist = [h for h in _hist if h.get("date") != snap["date"]]
         _hist.append(snap)
         _hist.sort(key=lambda h: _dt.datetime.strptime(h["date"], "%d %b %Y"))
-        _cut = _dt.date.today() - _dt.timedelta(days=90)
+        _cut  = _dt.date.today() - _dt.timedelta(days=90)
         _hist = [h for h in _hist if _dt.datetime.strptime(h["date"], "%d %b %Y").date() >= _cut]
         _snap_bytes = _json.dumps(_hist, indent=2).encode()
-        _msg = f"Data update {today_label}"
-        def _upsert(path, content, known_sha=None):
-            _sha = known_sha
-            if _sha is None:
-                try: _sha = repo.get_contents(path).sha
-                except GithubException: _sha = None
-            if _sha:
-                repo.update_file(path, _msg, content, _sha)
-            else:
-                repo.create_file(path, _msg, content)
-        _upsert("data/latest_it.csv",          it_bytes)
-        _upsert("data/latest_grn.csv",         grn_bytes)
-        _upsert("data/snapshot_history.json",  _snap_bytes, _hsha)
-        return True, f"Synced — {snap['total_vol']:,} units · ₹{snap['total_val']/1e5:.1f}L"
+
+        _upsert("data/latest_it.csv",         it_bytes)
+        _upsert("data/latest_grn.csv",        grn_bytes)
+        _upsert("data/snapshot_history.json", _snap_bytes, _hsha)
+        return True, f"Synced — {snap['total_vol']:,} units · Rs.{snap['total_val']/1e5:.1f}L"
     except Exception as _e:
         return False, f"GitHub sync failed: {_e}"
 
