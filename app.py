@@ -543,29 +543,43 @@ with tabs[0]:
     )
     bucket_df = bucket_df.merge(gt30_bucket, on="Main Bucket", how="left").fillna(0)
 
+    ov_metric = st.segmented_control(
+        "By Type — Show", ["Value (₹ L)", "Volume (Units)"],
+        default="Value (₹ L)", key="ov_metric",
+    ) or "Value (₹ L)"
+    _ov_val = ov_metric == "Value (₹ L)"
+
     tbl_left, chart_right = st.columns([1, 2])
     with tbl_left:
         disp = bucket_df.copy()
-        disp[">30d Vol%"] = disp.apply(
-            lambda r: f"{r['Over30_Vol']/r['Volume']*100:.0f}%" if r["Volume"] else "—", axis=1)
-        disp[">30d Val%"] = disp.apply(
-            lambda r: f"{r['Over30_Val']/r['Value']*100:.0f}%" if r["Value"] else "—", axis=1)
-        disp["Volume"]   = disp["Volume"].apply(fmt_qty)
-        disp["Value"]    = disp["Value"].apply(fmt_L)
-        disp[">30d Vol"] = disp["Over30_Vol"].apply(fmt_qty)
-        disp[">30d Val"] = disp["Over30_Val"].apply(fmt_L)
-        tot_row = pd.DataFrame([{
-            "Main Bucket": "TOTAL",
-            "Volume":    fmt_qty(bucket_df["Volume"].sum()),
-            "Value":     fmt_L(bucket_df["Value"].sum()),
-            ">30d Vol":  fmt_qty(bucket_df["Over30_Vol"].sum()),
-            ">30d Vol%": f"{bucket_df['Over30_Vol'].sum()/bucket_df['Volume'].sum()*100:.0f}%" if bucket_df["Volume"].sum() else "—",
-            ">30d Val":  fmt_L(bucket_df["Over30_Val"].sum()),
-            ">30d Val%": f"{gt30_pct:.0f}%",
-        }])
+        if _ov_val:
+            disp[">30d %"] = disp.apply(
+                lambda r: f"{r['Over30_Val']/r['Value']*100:.0f}%" if r["Value"] else "—", axis=1)
+            disp["Value"]    = disp["Value"].apply(fmt_L)
+            disp[">30d Val"] = disp["Over30_Val"].apply(fmt_L)
+            tot_row = pd.DataFrame([{
+                "Main Bucket": "TOTAL",
+                "Value":     fmt_L(bucket_df["Value"].sum()),
+                ">30d Val":  fmt_L(bucket_df["Over30_Val"].sum()),
+                ">30d %":    f"{gt30_pct:.0f}%",
+            }])
+            show_cols = ["Main Bucket", "Value", ">30d Val", ">30d %"]
+        else:
+            tot_vol = bucket_df["Volume"].sum()
+            tot_30v = bucket_df["Over30_Vol"].sum()
+            disp[">30d %"] = disp.apply(
+                lambda r: f"{r['Over30_Vol']/r['Volume']*100:.0f}%" if r["Volume"] else "—", axis=1)
+            disp["Volume"]   = disp["Volume"].apply(fmt_qty)
+            disp[">30d Vol"] = disp["Over30_Vol"].apply(fmt_qty)
+            tot_row = pd.DataFrame([{
+                "Main Bucket": "TOTAL",
+                "Volume":    fmt_qty(tot_vol),
+                ">30d Vol":  fmt_qty(tot_30v),
+                ">30d %":    f"{tot_30v/tot_vol*100:.0f}%" if tot_vol else "—",
+            }])
+            show_cols = ["Main Bucket", "Volume", ">30d Vol", ">30d %"]
         st.dataframe(
-            pd.concat([tot_row, disp[["Main Bucket","Volume",">30d Vol",">30d Vol%","Value",">30d Val",">30d Val%"]]],
-                      ignore_index=True),
+            pd.concat([tot_row, disp[show_cols]], ignore_index=True),
             hide_index=True, use_container_width=True, height=290,
         )
 
@@ -629,29 +643,35 @@ with tabs[1]:
     )
     brand_total = brand_total.merge(gt30_brand, on="brand", how="left").fillna(0)
 
+    br_metric = st.segmented_control(
+        "Brand Summary — Show", ["Value (₹ L)", "Volume (Units)"],
+        default="Value (₹ L)", key="br_metric",
+    ) or "Value (₹ L)"
+    _br_val = br_metric == "Value (₹ L)"
+
     left, right = st.columns([1, 2])
     with left:
-        disp = brand_total.copy()
         tot = {
-            "brand":       "TOTAL",
-            "Volume":      brand_total["Volume"].sum(),
-            "Value":       brand_total["Value"].sum(),
-            "Over30_Vol":  brand_total["Over30_Vol"].sum(),
-            "Over30_Val":  brand_total["Over30_Val"].sum(),
+            "brand":      "TOTAL",
+            "Volume":     brand_total["Volume"].sum(),
+            "Value":      brand_total["Value"].sum(),
+            "Over30_Vol": brand_total["Over30_Vol"].sum(),
+            "Over30_Val": brand_total["Over30_Val"].sum(),
         }
-        disp = pd.concat([pd.DataFrame([tot]), disp], ignore_index=True)
-        disp[">30d Vol%"] = disp.apply(
-            lambda r: f"{r['Over30_Vol']/r['Volume']*100:.0f}%" if r["Volume"] else "—", axis=1)
-        disp[">30d Val%"] = disp.apply(
-            lambda r: f"{r['Over30_Val']/r['Value']*100:.0f}%" if r["Value"] else "—", axis=1)
-        disp["Volume"]   = disp["Volume"].apply(fmt_qty)
-        disp["Value"]    = disp["Value"].apply(fmt_L)
-        disp[">30d Vol"] = disp["Over30_Vol"].apply(fmt_qty)
-        disp[">30d Val"] = disp["Over30_Val"].apply(fmt_L)
-        st.dataframe(
-            disp[["brand", "Volume", ">30d Vol", ">30d Vol%", "Value", ">30d Val", ">30d Val%"]],
-            hide_index=True, use_container_width=True, height=380,
-        )
+        disp = pd.concat([pd.DataFrame([tot]), brand_total.copy()], ignore_index=True)
+        if _br_val:
+            disp[">30d %"] = disp.apply(
+                lambda r: f"{r['Over30_Val']/r['Value']*100:.0f}%" if r["Value"] else "—", axis=1)
+            disp["Value"]    = disp["Value"].apply(fmt_L)
+            disp[">30d Val"] = disp["Over30_Val"].apply(fmt_L)
+            br_cols = ["brand", "Value", ">30d Val", ">30d %"]
+        else:
+            disp[">30d %"] = disp.apply(
+                lambda r: f"{r['Over30_Vol']/r['Volume']*100:.0f}%" if r["Volume"] else "—", axis=1)
+            disp["Volume"]   = disp["Volume"].apply(fmt_qty)
+            disp[">30d Vol"] = disp["Over30_Vol"].apply(fmt_qty)
+            br_cols = ["brand", "Volume", ">30d Vol", ">30d %"]
+        st.dataframe(disp[br_cols], hide_index=True, use_container_width=True, height=380)
 
     with right:
         top15 = brand_total.head(15).copy()
