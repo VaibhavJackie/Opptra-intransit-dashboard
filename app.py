@@ -637,8 +637,8 @@ with tabs[1]:
                             yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_b, use_container_width=True)
 
-    brand_metric = st.radio("Brand × Bucket — Show", ["Value (₹ L)", "Volume (Units)"],
-                            horizontal=True, key="brand_metric")
+    brand_metric = st.segmented_control("Brand × Bucket", ["Value (₹ L)", "Volume (Units)"],
+                                        default="Value (₹ L)", key="brand_metric") or "Value (₹ L)"
     b_vcol = "Open Value (INR)" if brand_metric == "Value (₹ L)" else "Intransit_quantity"
     b_fmt  = fmt_L if brand_metric == "Value (₹ L)" else fmt_qty
 
@@ -687,8 +687,8 @@ with tabs[2]:
                             yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_f, use_container_width=True)
 
-    fac_metric = st.radio("Facility × Bucket — Show", ["Value (₹ L)", "Volume (Units)"],
-                          horizontal=True, key="fac_metric")
+    fac_metric = st.segmented_control("Facility × Bucket", ["Value (₹ L)", "Volume (Units)"],
+                                      default="Value (₹ L)", key="fac_metric") or "Value (₹ L)"
     f_vcol = "Open Value (INR)" if fac_metric == "Value (₹ L)" else "Intransit_quantity"
     f_fmt  = fmt_L if fac_metric == "Value (₹ L)" else fmt_qty
 
@@ -714,8 +714,8 @@ with tabs[3]:
     age_df = fdf[fdf["Age"].notna()].copy()
 
     # Vol / Value toggle (used by all pivot tables in this tab)
-    age_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
-                          horizontal=True, key="age_metric")
+    age_metric = st.segmented_control("Show", ["Value (₹ L)", "Volume (Units)"],
+                                      default="Value (₹ L)", key="age_metric") or "Value (₹ L)"
     val_col = "Open Value (INR)" if age_metric == "Value (₹ L)" else "Intransit_quantity"
     fmt_fn  = fmt_L if age_metric == "Value (₹ L)" else fmt_qty
 
@@ -830,8 +830,8 @@ with tabs[4]:
         with mv_c1:
             mv_mode   = st.radio("Compare against", ["DoD (prev entry)", "WoW (7 days ago)"],
                                  key="mv_mode")
-            mv_metric = st.radio("Show", ["Value (₹ L)", "Volume (Units)"],
-                                 key="mv_metric")
+            mv_metric = st.segmented_control("Show", ["Value (₹ L)", "Volume (Units)"],
+                                             default="Value (₹ L)", key="mv_metric") or "Value (₹ L)"
 
         # Select comparison snapshot
         if mv_mode == "DoD (prev entry)":
