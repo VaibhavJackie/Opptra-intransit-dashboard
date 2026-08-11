@@ -275,17 +275,24 @@ def _build_snapshot_entry(it_bytes: bytes, grn_bytes: bytes) -> dict:
 def _push_to_github(it_bytes: bytes, grn_bytes: bytes, today_label: str):
     """Push IT + GRN + updated snapshot to GitHub. Returns (ok, message)."""
     try:
-        token = str(st.secrets.get("GITHUB_TOKEN", "")).strip()
-        if not token:
-            return False, "Add GITHUB_TOKEN to Streamlit secrets to enable auto-sync"
         import base64 as _b64
         import traceback as _tb
         import requests as _req
+        token = str(st.secrets.get("GITHUB_TOKEN", "")).strip()
+        if not token:
+            return False, "Add GITHUB_TOKEN to Streamlit secrets to enable auto-sync"
+        # Detect corrupted token (non-ASCII chars from bad copy-paste)
+        _bad = [i for i, c in enumerate(token) if ord(c) > 127]
+        if _bad:
+            return False, (
+                f"GITHUB_TOKEN is corrupted — {len(_bad)} non-ASCII character(s) at "
+                f"position(s) {_bad[:3]}{'…' if len(_bad)>3 else ''}. "
+                "Go to Streamlit → Settings → Secrets, delete the token, "
+                "generate a fresh GitHub PAT, and paste it again."
+            )
         _REPO  = "VaibhavJackie/Opptra-intransit-dashboard"
         _API   = f"https://api.github.com/repos/{_REPO}/contents"
-        # encode token to ASCII to catch bad-paste issues before HTTP layer does
-        _tok   = token.encode("ascii").decode("ascii")
-        _hdrs  = {"Authorization": f"token {_tok}",
+        _hdrs  = {"Authorization": f"token {token}",
                   "Accept": "application/vnd.github+json"}
         _msg   = f"Data update {today_label}"
 
@@ -325,7 +332,12 @@ def _push_to_github(it_bytes: bytes, grn_bytes: bytes, today_label: str):
         _upsert("data/snapshot_history.json", _snap_bytes, _hsha)
         return True, f"Synced — {snap['total_vol']:,} units · Rs.{snap['total_val']/1e5:.1f}L"
     except Exception as _e:
-        _loc = _tb.format_exc().strip().splitlines()[-1] if "_tb" in dir() else str(type(_e).__name__)
+        if "_tb" in dir():
+            _lines = _tb.format_exc().strip().splitlines()
+            # second-to-last line is the code line that raised; last line is the message
+            _loc = _lines[-2].strip() if len(_lines) >= 2 else _lines[-1]
+        else:
+            _loc = type(_e).__name__
         return False, f"GitHub sync failed [{_loc}]: {_e}"
 
 
