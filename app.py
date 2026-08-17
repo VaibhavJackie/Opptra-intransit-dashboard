@@ -376,6 +376,7 @@ with st.sidebar:
     grn_file = st.file_uploader("GRN / Inventory Ledger (.csv)", type=["csv"])
     st.markdown("---")
     st.caption("Upload both files to refresh the dashboard for **all viewers**.")
+    st.info("⚠️ **IT file > 25 MB?** Streamlit Cloud can't accept it here.\nRun **UPDATE_DATA.bat** on your PC instead — it pushes directly to GitHub and all users see new data in ~2 min.", icon="📂")
     with st.expander("📋 Required column format"):
         st.markdown("**In-Transit file** — required columns:")
         st.code(
