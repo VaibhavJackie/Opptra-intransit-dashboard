@@ -67,8 +67,9 @@ def run(cmd, cwd=None):
 def main():
     log("─── auto_update check ───")
 
-    it_file  = find_latest("inventory_dataframe*.csv")
-    grn_file = find_latest("india_grn1*.csv")
+    it_file       = find_latest("inventory_dataframe*.csv")
+    grn_file      = find_latest("india_grn1*.csv")
+    gatepass_file = find_latest("Gatepass_df4_reference_id*.csv")
 
     if not it_file:
         log("No inventory_dataframe*.csv in Downloads — skipping"); return
@@ -82,7 +83,8 @@ def main():
     if state.get("it") == it_key and state.get("grn") == grn_key:
         log(f"Files unchanged ({it_file.name}) — nothing to do"); return
 
-    log(f"New files detected:  IT={it_file.name}  GRN={grn_file.name}")
+    log(f"New files detected:  IT={it_file.name}  GRN={grn_file.name}"
+        + (f"  GP={gatepass_file.name}" if gatepass_file else "  GP=none"))
 
     try:
         # Slim IT (strips zero-qty rows so the file fits under 25 MB)
@@ -92,6 +94,11 @@ def main():
         shutil.copy(grn_file, DATA_DIR / "latest_grn.csv")
         log("Copied GRN file")
 
+        # Copy Gatepass reference (optional)
+        if gatepass_file:
+            shutil.copy(gatepass_file, DATA_DIR / "latest_gatepass.csv")
+            log(f"Copied Gatepass reference file")
+
         # Append snapshot
         rc = run(f'python "{ROOT / "append_snapshot.py"}"')
         if rc != 0:
@@ -100,8 +107,8 @@ def main():
         # Git add + commit + push
         label = datetime.date.today().strftime("%d %b %Y")
         rc = run(
-            f'git add data/latest_it.csv data/latest_grn.csv '
-            f'data/snapshot_history.json data/current_summary.json data/prev_summary.json '
+            f'git add data/latest_it.csv data/latest_grn.csv data/snapshot_history.json '
+            f'data/latest_gatepass.csv '
             f'&& git commit -m "Auto-update {label}" '
             f'&& git push origin master'
         )

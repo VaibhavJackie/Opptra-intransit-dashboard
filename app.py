@@ -66,7 +66,7 @@ def movement_type(wh: str) -> str:
 
 # ─── Processing ──────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def process(it_bytes: bytes, grn_bytes: bytes):
+def process(it_bytes: bytes, grn_bytes: bytes, gatepass_bytes: bytes = None):
     # --- In-Transit ---
     df = pd.read_csv(io.BytesIO(it_bytes))
     df.columns = df.columns.str.strip()
@@ -150,6 +150,25 @@ def process(it_bytes: bytes, grn_bytes: bytes):
     df = df.merge(avg_cost, on="sku", how="left")
     df["Open Value (INR)"] = df["Intransit_quantity"] * df["Average Cost"]
     df["Delta Cost"] = 0.0
+
+    # --- Gatepass Reference ---
+    if gatepass_bytes is not None:
+        try:
+            gp = pd.read_csv(io.BytesIO(gatepass_bytes))
+            gp.columns = gp.columns.str.strip()
+            gp_ref = (gp[gp["reference"].notna()]
+                      .groupby("gatepass_code")["reference"]
+                      .first()
+                      .reset_index()
+                      .rename(columns={"gatepass_code": "GP_PO", "reference": "_gp_ref"}))
+            df = df.merge(gp_ref, on="GP_PO", how="left")
+            if "Reference" not in df.columns:
+                df["Reference"] = df["_gp_ref"]
+            else:
+                df["Reference"] = df["Reference"].where(df["Reference"].notna(), df["_gp_ref"])
+            df = df.drop(columns=["_gp_ref"])
+        except Exception:
+            pass
 
     # Rename for output
     df = df.rename(columns={
@@ -363,12 +382,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-_DATA_DIR   = _Path(__file__).parent / "data"
+_DATA_DIR       = _Path(__file__).parent / "data"
 _DATA_DIR.mkdir(exist_ok=True)
-_DEFAULT_IT  = _DATA_DIR / "latest_it.csv"
-_DEFAULT_GRN = _DATA_DIR / "latest_grn.csv"
-_CURR_SUMM   = _DATA_DIR / "current_summary.json"
-_PREV_SUMM   = _DATA_DIR / "prev_summary.json"
+_DEFAULT_IT      = _DATA_DIR / "latest_it.csv"
+_DEFAULT_GRN     = _DATA_DIR / "latest_grn.csv"
+_DEFAULT_GATEPASS = _DATA_DIR / "latest_gatepass.csv"
+_CURR_SUMM       = _DATA_DIR / "current_summary.json"
+_PREV_SUMM       = _DATA_DIR / "prev_summary.json"
 
 with st.sidebar:
     st.markdown("### 📂 Upload Files")
@@ -430,8 +450,12 @@ else:
     st.sidebar.warning("Upload both CSV files above to view the dashboard.")
     st.stop()
 
+gatepass_bytes = None
+if _DEFAULT_GATEPASS.exists():
+    with open(_DEFAULT_GATEPASS, "rb") as _f: gatepass_bytes = _f.read()
+
 with st.spinner("Processing files…"):
-    df, missing_skus, avg_cost = process(it_bytes, grn_bytes)
+    df, missing_skus, avg_cost = process(it_bytes, grn_bytes, gatepass_bytes)
 
 # Fixed buckets first; then any extra warehouse values found in the data
 _extra_buckets = sorted([b for b in df["Main Bucket"].dropna().unique()

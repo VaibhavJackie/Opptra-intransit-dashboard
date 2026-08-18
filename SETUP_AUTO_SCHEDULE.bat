@@ -30,10 +30,12 @@ if errorlevel 1 (
 REM Delete existing task if present (ignore error if not found)
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 
-REM Create the task: every hour, starting now, run silently
+set "WRAPPER=%~dp0RUN_AUTO_UPDATE.bat"
+
+REM Create the task: every hour, run via wrapper bat (ensures correct working dir + PATH)
 schtasks /create ^
   /tn "%TASK_NAME%" ^
-  /tr "%PYTHON% \"%SCRIPT%\"" ^
+  /tr "cmd /c \"%WRAPPER%\"" ^
   /sc HOURLY ^
   /mo 1 ^
   /st 09:00 ^
